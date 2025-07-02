@@ -2,46 +2,95 @@ provider "aws" {
   region = "ap-northeast-2"
 }
 
-module "ecr" {
-  source                         = "./modules/ecr"
-  ecr_review_repository_name     = "review-crawler"
-  ecr_restaurant_repository_name = "restaurant-crawler"
-  ecr_atmosphere_repository_name = "atmosphere-classifier"
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "lambda_function.py"
+  output_path = "lambda_function.zip"
 }
 
-module "iam" {
-  source           = "./modules/iam"
-  lambda_role_name = "review-crawler-lambda-role"
-  s3_read_arns     = [module.s3_restaurant.bucket_arn]
-  s3_write_arns    = [module.s3_review.bucket_arn]
+resource "aws_lambda_permission" "allow_s3" {
+  statement_id  = "AllowExecutionFromS3"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.hello_world.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = "arn:aws:s3:::naver-map-restaurant"
 }
 
-module "lambda" {
-  source = "./modules/lambda"
-  # lambda_function_name  = "review-crawler"
-  # lambda_role_arn       = module.iam.lambda_role_arn
-  # review_image_uri      = module.ecr.review_image_uri
-  restaurant_bucket_id  = module.s3_restaurant.restaurant_bucket_id
-  s3_review_bucket_name = var.s3_review_bucket_name
-  aws_access_key_id     = var.aws_access_key_id
-  aws_secret_access_key = var.aws_secret_access_key
-  aws_region_env        = var.aws_region_env
-  place_id              = var.place_id
-
-  # New review classifier Lambda
-  atmosphere_function_name = "atmosphere-classifier"
-  atmosphere_role_arn      = module.iam.lambda_role_arn
-  atmosphere_image_uri     = module.ecr.atmosphere_image_uri
-  review_bucket_id         = module.s3_review.review_bucket_id
-  review_bucket_arn        = module.s3_review.review_bucket_arn
-  atmosphere_bucket_id     = module.s3_atmosphere.atmosphere_bucket_id
-  # atmosphere_bucket_arn    = module.s3.atmosphere_bucket_arn
-  output_bucket_name = "naver-map-review-atmosphere"
+resource "aws_iam_role" "lambda_batch_role" {
+  name = "lambda-batch-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
 }
+
+resource "aws_iam_role_policy" "lambda_batch_policy" {
+  name = "lambda-batch-policy"
+  role = aws_iam_role.lambda_batch_role.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["s3:GetObject", "s3:ListBucket"],
+        Resource = [
+          module.s3_restaurant.bucket_arn,
+          "${module.s3_restaurant.bucket_arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow",
+        Action   = ["batch:SubmitJob"],
+        Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_logs" {
+  role       = aws_iam_role.lambda_batch_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Lambda 함수
+resource "aws_lambda_function" "hello_world" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = "hello-world-function"
+  role             = aws_iam_role.lambda_batch_role.arn
+  handler          = "lambda_function.handler"
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  runtime          = "python3.9"
+  timeout          = 3
+}
+
+# module "iam" {
+#   source           = "./modules/iam"
+#   lambda_role_name = "review-crawler-lambda-role"
+#   s3_read_arns     = [module.s3_restaurant.bucket_arn]
+#   s3_write_arns    = [module.s3_review.bucket_arn]
+# }
 
 module "s3_restaurant" {
-  source      = "./modules/s3"
-  bucket_name = "naver-map-restaurant"
+  source               = "./modules/s3"
+  bucket_name          = "naver-map-restaurant"
+  enable_notification  = true
+  lambda_function_arn  = aws_lambda_function.hello_world.arn
+  lambda_permission_id = aws_lambda_permission.allow_s3.id
 }
 
 module "s3_review" {
@@ -50,16 +99,28 @@ module "s3_review" {
 }
 
 module "s3_atmosphere" {
-  source               = "./modules/s3"
-  bucket_name          = "naver-map-review-atmosphere"
-  enable_notification  = true
-  lambda_function_arn  = module.lambda.atmosphere_function_arn
-  lambda_permission_id = module.lambda.atmosphere_permission_id
+  source      = "./modules/s3"
+  bucket_name = "naver-map-review-atmosphere"
 }
 
 module "cloudwatch" {
   source               = "./modules/cloudwatch"
-  lambda_function_name = module.lambda.atmosphere_function_name
+  lambda_function_name = aws_lambda_function.hello_world.function_name
+}
+
+module "ecr_restaurant" {
+  source          = "./modules/ecr"
+  repository_name = "restaurant-crawler"
+}
+
+module "ecr_review" {
+  source          = "./modules/ecr"
+  repository_name = "review-crawler"
+}
+
+module "ecr_atmosphere" {
+  source          = "./modules/ecr"
+  repository_name = "atmosphere-classifier"
 }
 
 # module "ec2" {

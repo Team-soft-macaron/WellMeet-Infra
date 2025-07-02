@@ -4,4 +4,4 @@ output "instance_id" {
 
 output "public_ip" {
   value = aws_instance.ubuntu.public_ip
-} 
+}

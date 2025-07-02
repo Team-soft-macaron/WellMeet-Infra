@@ -1,20 +1,3 @@
-variable "lambda_role_name" {
-  description = "Name of the Lambda execution role"
-  type        = string
-}
-
-variable "s3_read_arns" {
-  description = "List of S3 bucket ARNs for read access"
-  type        = list(string)
-  default     = []
-}
-
-variable "s3_write_arns" {
-  description = "List of S3 bucket ARNs for write access"
-  type        = list(string)
-  default     = []
-}
-
 resource "aws_iam_role" "lambda_role" {
   name = var.lambda_role_name
   assume_role_policy = jsonencode({
@@ -74,10 +57,3 @@ resource "aws_iam_role_policy" "lambda_ecr" {
   })
 }
 
-output "lambda_role_arn" {
-  value = aws_iam_role.lambda_role.arn
-}
-
-output "lambda_role_id" {
-  value = aws_iam_role.lambda_role.id
-}
