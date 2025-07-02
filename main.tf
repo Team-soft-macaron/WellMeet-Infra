@@ -10,10 +10,10 @@ module "ecr" {
 }
 
 module "iam" {
-  source                = "./modules/iam"
-  lambda_role_name      = "review-crawler-lambda-role"
-  restaurant_bucket_arn = module.s3_restaurant.restaurant_bucket_arn
-  review_bucket_arn     = module.s3_review.review_bucket_arn
+  source           = "./modules/iam"
+  lambda_role_name = "review-crawler-lambda-role"
+  s3_read_arns     = [module.s3_restaurant.bucket_arn]
+  s3_write_arns    = [module.s3_review.bucket_arn]
 }
 
 module "lambda" {

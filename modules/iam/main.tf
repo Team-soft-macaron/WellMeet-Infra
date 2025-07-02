@@ -3,14 +3,16 @@ variable "lambda_role_name" {
   type        = string
 }
 
-variable "restaurant_bucket_arn" {
-  description = "ARN of the restaurant S3 bucket"
-  type        = string
+variable "s3_read_arns" {
+  description = "List of S3 bucket ARNs for read access"
+  type        = list(string)
+  default     = []
 }
 
-variable "review_bucket_arn" {
-  description = "ARN of the review S3 bucket"
-  type        = string
+variable "s3_write_arns" {
+  description = "List of S3 bucket ARNs for write access"
+  type        = list(string)
+  default     = []
 }
 
 resource "aws_iam_role" "lambda_role" {
@@ -37,18 +39,18 @@ resource "aws_iam_role_policy" "lambda_s3" {
   role = aws_iam_role.lambda_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
+    Statement = compact([
+      length(var.s3_read_arns) > 0 ? {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:ListBucket"]
-        Resource = [var.restaurant_bucket_arn, "${var.restaurant_bucket_arn}/*"]
-      },
-      {
+        Resource = flatten([for arn in var.s3_read_arns : [arn, "${arn}/*"]])
+      } : null,
+      length(var.s3_write_arns) > 0 ? {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:PutObjectAcl"]
-        Resource = [var.review_bucket_arn, "${var.review_bucket_arn}/*"]
-      }
-    ]
+        Resource = flatten([for arn in var.s3_write_arns : [arn, "${arn}/*"]])
+      } : null
+    ])
   })
 }
 
