@@ -4,6 +4,7 @@ import os
 from typing import List, Dict, Any
 import logging
 import time
+from urllib.parse import unquote_plus
 
 # 로깅 설정
 logger = logging.getLogger()
@@ -18,7 +19,7 @@ JOB_QUEUE = os.environ.get("BATCH_JOB_QUEUE", "default-queue")
 JOB_DEFINITION = os.environ.get("BATCH_JOB_DEFINITION", "default-job-def")
 
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     S3 이벤트를 처리하고 JSON 파일에서 place_id를 추출하여 Batch 작업을 실행
 
@@ -30,30 +31,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         처리 결과
     """
     try:
+        total_submitted_jobs = 0
         # S3 이벤트에서 버킷과 키 정보 추출
         for record in event["Records"]:
             # S3 이벤트 정보 파싱
             s3_event = record["s3"]
             bucket_name = s3_event["bucket"]["name"]
             object_key = s3_event["object"]["key"]
+            object_key = unquote_plus(object_key)
+            print(f"Processing file: s3://{bucket_name}/{object_key}")
 
             logger.info(f"Processing file: s3://{bucket_name}/{object_key}")
 
             # S3에서 파일 읽기
-            try:
-                response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-                file_content = response["Body"].read().decode("utf-8")
-                data = json.loads(file_content)
+            response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+            file_content = response["Body"].read().decode("utf-8")
+            data = json.loads(file_content)
 
-                logger.info(f"Successfully loaded JSON from {object_key}")
-
-            except Exception as e:
-                logger.error(f"Error reading file {object_key}: {str(e)}")
-                continue
+            logger.info(f"Successfully loaded JSON from {object_key}")
 
             # place_id 추출 및 처리
             place_ids = extract_place_ids(data)
             logger.info(f"Found {len(place_ids)} place_ids in {object_key}")
+            total_submitted_jobs += len(place_ids)
 
             # 각 place_id에 대해 작업 실행
             job_responses = []
@@ -71,11 +71,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "body": json.dumps(
                 {
                     "message": "Successfully processed S3 event",
-                    "jobs_submitted": len(job_responses),
+                    "jobs_submitted": total_submitted_jobs,
                 }
             ),
         }
-
+    except s3_client.exceptions.NoSuchKey as e:
+        logger.error(f"No such key: {object_key}")
     except Exception as e:
         logger.error(f"Lambda execution error: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}

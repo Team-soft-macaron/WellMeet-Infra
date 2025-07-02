@@ -85,7 +85,7 @@ resource "aws_lambda_function" "submit_batch_job" {
   handler          = "lambda_function.handler"
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   runtime          = "python3.9"
-  timeout          = 3
+  timeout          = 900
 
   environment {
     variables = {
@@ -140,7 +140,7 @@ module "vpc" {
   cidr   = "10.0.0.0/16"
 
   azs            = ["ap-northeast-2a", "ap-northeast-2c"]
-  public_subnets = ["10.0.101.0/24", "10.0.102.0/24"] # public subnet만 사용
+  public_subnets = ["10.0.101.0/24", "10.0.102.0/24"]
 
   enable_nat_gateway = false
   enable_vpn_gateway = false

@@ -157,6 +157,11 @@ resource "aws_batch_job_definition" "main" {
       attemptDurationSeconds = 1800
     }
 
+    # public IP 할당하여 인터넷 연결 허용
+    networkConfiguration = {
+      assignPublicIp = "ENABLED"
+    }
+
     # 로그 설정
     logConfiguration = {
       logDriver = "awslogs"
@@ -175,6 +180,10 @@ resource "aws_batch_job_definition" "main" {
       {
         name  = "S3_BUCKET_NAME"
         value = var.s3_bucket_name
+      },
+      {
+        name  = "PYTHONUNBUFFERED"
+        value = "1"
       }
     ]
   })
