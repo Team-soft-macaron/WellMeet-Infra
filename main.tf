@@ -12,8 +12,8 @@ module "ecr" {
 module "iam" {
   source                = "./modules/iam"
   lambda_role_name      = "review-crawler-lambda-role"
-  restaurant_bucket_arn = module.s3.restaurant_bucket_arn
-  review_bucket_arn     = module.s3.review_bucket_arn
+  restaurant_bucket_arn = module.s3_restaurant.restaurant_bucket_arn
+  review_bucket_arn     = module.s3_review.review_bucket_arn
 }
 
 module "lambda" {
@@ -21,7 +21,7 @@ module "lambda" {
   # lambda_function_name  = "review-crawler"
   # lambda_role_arn       = module.iam.lambda_role_arn
   # review_image_uri      = module.ecr.review_image_uri
-  restaurant_bucket_id  = module.s3.restaurant_bucket_id
+  restaurant_bucket_id  = module.s3_restaurant.restaurant_bucket_id
   s3_review_bucket_name = var.s3_review_bucket_name
   aws_access_key_id     = var.aws_access_key_id
   aws_secret_access_key = var.aws_secret_access_key
@@ -32,20 +32,29 @@ module "lambda" {
   atmosphere_function_name = "atmosphere-classifier"
   atmosphere_role_arn      = module.iam.lambda_role_arn
   atmosphere_image_uri     = module.ecr.atmosphere_image_uri
-  review_bucket_id         = module.s3.review_bucket_id
-  review_bucket_arn        = module.s3.review_bucket_arn
-  atmosphere_bucket_id     = module.s3.atmosphere_bucket_id
+  review_bucket_id         = module.s3_review.review_bucket_id
+  review_bucket_arn        = module.s3_review.review_bucket_arn
+  atmosphere_bucket_id     = module.s3_atmosphere.atmosphere_bucket_id
   # atmosphere_bucket_arn    = module.s3.atmosphere_bucket_arn
   output_bucket_name = "naver-map-review-atmosphere"
 }
 
-module "s3" {
-  source                          = "./modules/s3"
-  restaurant_bucket_name          = "naver-map-restaurant"
-  review_bucket_name              = "naver-map-review"
-  atmosphere_bucket_name          = "naver-map-review-atmosphere"
-  atmosphere_lambda_function_arn  = module.lambda.atmosphere_function_arn
-  atmosphere_lambda_permission_id = module.lambda.atmosphere_permission_id
+module "s3_restaurant" {
+  source      = "./modules/s3"
+  bucket_name = "naver-map-restaurant"
+}
+
+module "s3_review" {
+  source      = "./modules/s3"
+  bucket_name = "naver-map-review"
+}
+
+module "s3_atmosphere" {
+  source               = "./modules/s3"
+  bucket_name          = "naver-map-review-atmosphere"
+  enable_notification  = true
+  lambda_function_arn  = module.lambda.atmosphere_function_arn
+  lambda_permission_id = module.lambda.atmosphere_permission_id
 }
 
 module "cloudwatch" {
