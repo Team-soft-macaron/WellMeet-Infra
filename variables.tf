@@ -1,9 +1,3 @@
-# review crawling Lambda 함수에 필요한 variable
-variable "s3_review_bucket_name" {
-  description = "Review S3 bucket name for Lambda environment variable"
-  type        = string
-}
-
 variable "aws_access_key_id" {
   description = "AWS access key ID for Lambda environment"
   type        = string
@@ -18,11 +12,6 @@ variable "aws_secret_access_key" {
 
 variable "aws_region_env" {
   description = "AWS region for Lambda environment variable"
-  type        = string
-}
-
-variable "place_id" {
-  description = "Place ID for Lambda environment variable"
   type        = string
 }
 

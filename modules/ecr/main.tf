@@ -1,9 +1,3 @@
-# Variables
-variable "repository_name" {
-  description = "Name of the ECR repository"
-  type        = string
-}
-
 resource "aws_ecr_repository" "this" {
   name                 = var.repository_name
   image_tag_mutability = "MUTABLE"
@@ -30,11 +24,3 @@ resource "aws_ecr_lifecycle_policy" "this" {
   })
 }
 
-# Outputs
-output "repository_url" {
-  value = aws_ecr_repository.this.repository_url
-}
-
-output "image_uri" {
-  value = "${aws_ecr_repository.this.repository_url}:latest"
-}
