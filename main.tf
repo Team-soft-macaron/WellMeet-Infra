@@ -2,11 +2,18 @@ provider "aws" {
   region = "ap-northeast-2"
 }
 
-data "archive_file" "lambda_zip" {
+data "archive_file" "run_aws_batch_zip" {
   type        = "zip"
-  source_file = "lambda_function.py"
-  output_path = "lambda_function.zip"
+  source_file = "./lambda_functions/run_aws_batch/run_aws_batch.py"
+  output_path = "run_aws_batch.zip"
 }
+
+data "archive_file" "save_restaurants_zip" {
+  type        = "zip"
+  source_file = "./lambda_functions/s3_to_DB/save_restaurants.py"
+  output_path = "save_restaurants.zip"
+}
+
 
 resource "aws_lambda_permission" "allow_s3" {
   statement_id  = "AllowExecutionFromS3"
@@ -79,11 +86,11 @@ resource "aws_batch_job_queue" "review_crawler" {
 }
 # Lambda 함수
 resource "aws_lambda_function" "submit_batch_job" {
-  filename         = data.archive_file.lambda_zip.output_path
+  filename         = data.archive_file.run_aws_batch_zip.output_path
   function_name    = "submit-batch-job-function"
   role             = aws_iam_role.lambda_batch_role.arn
-  handler          = "lambda_function.handler"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  handler          = "run_aws_batch.handler"
+  source_code_hash = data.archive_file.run_aws_batch_zip.output_base64sha256
   runtime          = "python3.9"
   timeout          = 900
 
@@ -93,6 +100,16 @@ resource "aws_lambda_function" "submit_batch_job" {
       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
     }
   }
+}
+
+resource "aws_lambda_function" "save_restaurants" {
+  filename         = data.archive_file.save_restaurants_zip.output_path
+  function_name    = "save-restaurants-function"
+  role             = aws_iam_role.lambda_batch_role.arn
+  handler          = "save_restaurants.handler"
+  source_code_hash = data.archive_file.run_aws_batch_zip.output_base64sha256
+  runtime          = "python3.9"
+  timeout          = 900
 }
 
 
