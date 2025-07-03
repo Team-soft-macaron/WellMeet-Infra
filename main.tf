@@ -14,6 +14,11 @@ data "archive_file" "save_restaurants_zip" {
   output_path = "save_restaurants.zip"
 }
 
+data "archive_file" "save_reviews_zip" {
+  type        = "zip"
+  source_file = "./lambda_functions/s3_to_DB/save_reviews.py"
+  output_path = "save_reviews.zip"
+}
 
 resource "aws_lambda_permission" "allow_s3" {
   statement_id  = "AllowExecutionFromS3"
@@ -111,7 +116,15 @@ resource "aws_lambda_function" "save_restaurants" {
   runtime          = "python3.9"
   timeout          = 900
 }
-
+resource "aws_lambda_function" "save_reviews" {
+  filename         = data.archive_file.save_reviews_zip.output_path
+  function_name    = "save-reviews-function"
+  role             = aws_iam_role.lambda_batch_role.arn
+  handler          = "save_reviews.handler"
+  source_code_hash = data.archive_file.save_reviews_zip.output_base64sha256
+  runtime          = "python3.9"
+  timeout          = 900
+}
 
 module "s3_restaurant" {
   source               = "./modules/s3"
