@@ -2,7 +2,6 @@ provider "aws" {
   region = "ap-northeast-2"
 }
 
-
 resource "aws_lambda_permission" "allow_s3" {
   statement_id  = "AllowExecutionFromS3"
   action        = "lambda:InvokeFunction"
@@ -88,6 +87,7 @@ resource "aws_lambda_function" "submit_batch_job" {
   role             = aws_iam_role.lambda_batch_role.arn
   handler          = "lambda_function.handler"
   source_code_hash = aws_s3_object.submit_batch_job_lambda_function.etag
+
   runtime          = "python3.9"
   timeout          = 900
 
