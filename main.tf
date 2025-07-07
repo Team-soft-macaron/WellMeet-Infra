@@ -88,8 +88,8 @@ resource "aws_lambda_function" "submit_batch_job" {
   handler          = "lambda_function.handler"
   source_code_hash = aws_s3_object.submit_batch_job_lambda_function.etag
 
-  runtime          = "python3.9"
-  timeout          = 900
+  runtime = "python3.9"
+  timeout = 900
 
   s3_bucket = module.s3_lambda_functions.bucket_name
   s3_key    = "submit-batch-job/lambda_function.zip"
@@ -100,11 +100,11 @@ resource "aws_lambda_function" "submit_batch_job" {
       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
 
       # RDS 연결 정보
-      RDS_HOST     = module.rds.endpoint
-      RDS_PORT     = module.rds.port
-      RDS_DB_NAME  = module.rds.database_name
-      RDS_USER     = module.rds.username
-      RDS_PASSWORD = var.rds_password
+      DB_HOST     = module.rds.endpoint
+      DB_PORT     = module.rds.port
+      DB_NAME     = module.rds.database_name
+      DB_USER     = module.rds.username
+      DB_PASSWORD = var.rds_password
     }
   }
 }
