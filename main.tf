@@ -98,6 +98,13 @@ resource "aws_lambda_function" "submit_batch_job" {
     variables = {
       BATCH_JOB_QUEUE      = aws_batch_job_queue.review_crawler.name
       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
+
+      # RDS 연결 정보
+      RDS_HOST     = module.rds.endpoint
+      RDS_PORT     = module.rds.port
+      RDS_DB_NAME  = module.rds.database_name
+      RDS_USER     = module.rds.username
+      RDS_PASSWORD = var.rds_password
     }
   }
 }
@@ -163,8 +170,9 @@ module "vpc" {
   name   = "batch-vpc"
   cidr   = "10.0.0.0/16"
 
-  azs            = ["ap-northeast-2a", "ap-northeast-2c"]
-  public_subnets = ["10.0.101.0/24", "10.0.102.0/24"]
+  azs             = ["ap-northeast-2a", "ap-northeast-2c"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
@@ -190,4 +198,17 @@ module "batch" {
   security_group_ids = [aws_security_group.batch_fargate.id]
   aws_region         = var.aws_region_env
   s3_bucket_name     = module.s3_review.bucket_name
+}
+
+module "rds" {
+  source                    = "./modules/rds"
+  name                      = "wellmeetdb"
+  instance_class            = "db.t3.micro"
+  allocated_storage         = 20
+  db_name                   = "wellmeetdb"
+  username                  = "postgres"
+  password                  = var.rds_password
+  vpc_id                    = module.vpc.vpc_id
+  subnet_ids                = module.vpc.private_subnets
+  allowed_security_group_id = aws_security_group.batch_fargate.id
 }
