@@ -2,23 +2,6 @@ provider "aws" {
   region = "ap-northeast-2"
 }
 
-# data "archive_file" "run_aws_batch_zip" {
-#   type        = "zip"
-#   source_file = "./lambda_functions/run_aws_batch/run_aws_batch.py"
-#   output_path = "run_aws_batch.zip"
-# }
-
-# data "archive_file" "save_restaurants_zip" {
-#   type        = "zip"
-#   source_dir  = "./lambda_functions/s3_to_DB/save_restaurants.py"
-#   output_path = "save_restaurants.zip"
-# }
-
-# data "archive_file" "save_reviews_zip" {
-#   type        = "zip"
-#   source_file = "./lambda_functions/s3_to_DB/save_reviews.py"
-#   output_path = "save_reviews.zip"
-# }
 
 resource "aws_lambda_permission" "allow_s3" {
   statement_id  = "AllowExecutionFromS3"
@@ -100,24 +83,6 @@ resource "aws_s3_object" "save_reviews_lambda_function" {
   key    = "save-reviews/lambda_function.zip"
 }
 
-# Lambda 함수
-# resource "aws_lambda_function" "submit_batch_job" {
-#   filename         = data.archive_file.run_aws_batch_zip.output_path
-#   function_name    = "submit-batch-job-function"
-#   role             = aws_iam_role.lambda_batch_role.arn
-#   handler          = "run_aws_batch.handler"
-#   source_code_hash = data.archive_file.run_aws_batch_zip.output_base64sha256
-#   runtime          = "python3.9"
-#   timeout          = 900
-
-#   environment {
-#     variables = {
-#       BATCH_JOB_QUEUE      = aws_batch_job_queue.review_crawler.name
-#       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
-#     }
-#   }
-# }
-
 resource "aws_lambda_function" "submit_batch_job" {
   function_name    = "submit-batch-job-function"
   role             = aws_iam_role.lambda_batch_role.arn
@@ -148,25 +113,6 @@ resource "aws_lambda_function" "save_reviews" {
   s3_bucket = module.s3_lambda_functions.bucket_name
   s3_key    = "save-reviews/lambda_function.zip"
 }
-
-# resource "aws_lambda_function" "save_restaurants" {
-#   filename         = data.archive_file.save_restaurants_zip.output_path
-#   function_name    = "save-restaurants-function"
-#   role             = aws_iam_role.lambda_batch_role.arn
-#   handler          = "save_restaurants.handler"
-#   source_code_hash = data.archive_file.run_aws_batch_zip.output_base64sha256
-#   runtime          = "python3.9"
-#   timeout          = 900
-# }
-# resource "aws_lambda_function" "save_reviews" {
-#   filename         = data.archive_file.save_reviews_zip.output_path
-#   function_name    = "save-reviews-function"
-#   role             = aws_iam_role.lambda_batch_role.arn
-#   handler          = "save_reviews.handler"
-#   source_code_hash = data.archive_file.save_reviews_zip.output_base64sha256
-#   runtime          = "python3.9"
-#   timeout          = 900
-# }
 
 module "s3_restaurant" {
   source               = "./modules/s3"
