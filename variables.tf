@@ -15,11 +15,6 @@ variable "aws_region_env" {
   type        = string
 }
 
-variable "rds_password" {
-  description = "RDS password"
-  type        = string
-  sensitive   = true
-}
 # variable "ec2_key_name" {
 #   description = "Name of the SSH key pair to use for EC2 instance."
 #   type        = string

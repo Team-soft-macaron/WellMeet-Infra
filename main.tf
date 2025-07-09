@@ -100,11 +100,11 @@ resource "aws_lambda_function" "submit_batch_job" {
       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
 
       # RDS 연결 정보
-      DB_HOST     = module.rds.endpoint
-      DB_PORT     = module.rds.port
-      DB_NAME     = module.rds.database_name
-      DB_USER     = module.rds.username
-      DB_PASSWORD = var.rds_password
+      # DB_HOST     = module.postgres.postgres_private_ip
+      # DB_PORT     = 5432
+      # DB_NAME     = module.postgres.postgres_db_name
+      # DB_USER     = module.postgres.postgres_db_username
+      # DB_PASSWORD = var.db_password
     }
   }
 }
@@ -200,15 +200,54 @@ module "batch" {
   s3_bucket_name     = module.s3_review.bucket_name
 }
 
-module "rds" {
-  source                    = "./modules/rds"
-  name                      = "wellmeetdb"
-  instance_class            = "db.t3.micro"
-  allocated_storage         = 20
-  db_name                   = "wellmeetdb"
-  username                  = "postgres"
-  password                  = var.rds_password
-  vpc_id                    = module.vpc.vpc_id
-  subnet_ids                = module.vpc.private_subnets
-  allowed_security_group_id = aws_security_group.batch_fargate.id
+# module "rds" {
+#   source                     = "./modules/rds"
+#   name                       = "wellmeetdb"
+#   instance_class             = "db.t3.micro"
+#   allocated_storage          = 20
+#   db_name                    = "wellmeetdb"
+#   username                   = "postgres"
+#   password                   = var.rds_password
+#   vpc_id                     = module.vpc.vpc_id
+#   subnet_ids                 = module.vpc.private_subnets
+#   allowed_security_group_ids = [aws_security_group.batch_fargate.id, aws_security_group.ec2_rds_access.id]
+# }
+# module "ec2" {
+#   source        = "./modules/ec2"
+#   instance_type = "t3.micro"
+#   ami_id        = "ami-0c9c942bd7bf113a2" # Ubuntu 22.04 LTS in ap-northeast-2
+# }
+
+# Security group for EC2 to access RDS
+# resource "aws_security_group" "ec2_rds_access" {
+#   name        = "ec2-rds-access-sg"
+#   description = "Security group for EC2 to access RDS"
+#   vpc_id      = module.vpc.vpc_id
+
+#   egress {
+#     from_port   = 0
+#     to_port     = 0
+#     protocol    = "-1"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+# }
+
+
+module "postgres" {
+  source                     = "./modules/postgres"
+  subnet_id                  = module.vpc.private_subnets[0]
+  allowed_security_group_ids = [module.ec2.security_group_id]
+  # db_password                = var.db_password
+  # db_name                    = "wellmeet"
+  # db_username                = "postgres"
+  vpc_id        = module.vpc.vpc_id
+  ami_id        = "ami-0aa6e95177252a286"
+  instance_name = "recommendation"
+}
+
+module "ec2" {
+  source        = "./modules/ec2"
+  subnet_id     = module.vpc.public_subnets[0]
+  vpc_id        = module.vpc.vpc_id
+  instance_name = "ec2"
 }
