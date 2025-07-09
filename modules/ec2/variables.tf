@@ -1,10 +1,16 @@
-variable "instance_type" {
-  description = "EC2 instance type"
+# 변수 정의
+variable "subnet_id" {
+  description = "Public 서브넷 ID"
   type        = string
-  default     = "r6i.large"
 }
 
-variable "ami_id" {
-  description = "AMI ID for Ubuntu latest"
+variable "instance_name" {
+  description = "EC2 인스턴스 이름"
+  type        = string
+  default     = "public-ec2"
+}
+
+variable "vpc_id" {
+  description = "VPC ID"
   type        = string
 }
