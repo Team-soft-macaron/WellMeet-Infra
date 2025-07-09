@@ -1,7 +1,16 @@
+# 출력 변수
 output "instance_id" {
-  value = aws_instance.ubuntu.id
+  description = "EC2 인스턴스 ID"
+  value       = aws_instance.public.id
 }
 
 output "public_ip" {
-  value = aws_instance.ubuntu.public_ip
+  description = "EC2 인스턴스의 고정 Public IP (Elastic IP)"
+  value       = aws_eip.public.public_ip
 }
+
+output "security_group_id" {
+  description = "EC2 인스턴스의 보안 그룹 ID"
+  value       = aws_security_group.public_ec2.id
+}
+

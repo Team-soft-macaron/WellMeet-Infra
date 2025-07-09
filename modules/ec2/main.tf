@@ -1,44 +1,33 @@
-# IAM Role for EC2
-resource "aws_iam_role" "ec2_ecr_role" {
-  name = "ec2-ecr-access-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
+# 새로운 private key 생성
+resource "tls_private_key" "ec2" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
 }
 
-# Attach ECR read policy to the role
-resource "aws_iam_role_policy_attachment" "ecr_read_policy" {
-  role       = aws_iam_role.ec2_ecr_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+# AWS key pair 생성
+resource "aws_key_pair" "ec2" {
+  key_name   = "${var.instance_name}-key"
+  public_key = tls_private_key.ec2.public_key_openssh
+
+  tags = {
+    Name = "${var.instance_name}-key"
+  }
 }
 
-# Optional: If you need to push images as well, use PowerUser instead
-# resource "aws_iam_role_policy_attachment" "ecr_power_user_policy" {
-#   role       = aws_iam_role.ec2_ecr_role.name
-#   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
-# }
-
-# Instance profile
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ec2-ecr-instance-profile"
-  role = aws_iam_role.ec2_ecr_role.name
+# 생성된 private key를 파일로 저장
+resource "local_file" "ec2_private_key" {
+  content         = tls_private_key.ec2.private_key_pem
+  filename        = "${var.instance_name}-key.pem"
+  file_permission = "0600"
 }
 
-# Security group
-resource "aws_security_group" "ec2_ssh" {
-  name        = "ec2-ssh-sg"
-  description = "Allow SSH and outbound internet access"
+# 보안 그룹 생성
+resource "aws_security_group" "public_ec2" {
+  name        = "${var.instance_name}-sg"
+  vpc_id      = var.vpc_id
+  description = "Security group for public EC2 instance"
 
+  # HTTP 접근 허용
   ingress {
     from_port   = 22
     to_port     = 22
@@ -47,6 +36,7 @@ resource "aws_security_group" "ec2_ssh" {
     description = "SSH access from anywhere"
   }
 
+  # 모든 아웃바운드 트래픽 허용
   egress {
     from_port   = 0
     to_port     = 0
@@ -54,38 +44,47 @@ resource "aws_security_group" "ec2_ssh" {
     cidr_blocks = ["0.0.0.0/0"]
     description = "Allow all outbound traffic"
   }
-}
-
-# EC2 Instance with IAM role
-resource "aws_instance" "ubuntu" {
-  ami                    = var.ami_id
-  instance_type          = var.instance_type
-  vpc_security_group_ids = [aws_security_group.ec2_ssh.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name # IAM Role 추가
 
   tags = {
-    Name = "wellmeet-ubuntu"
+    Name = "${var.instance_name}-sg"
+  }
+}
+
+# EC2 인스턴스 생성
+resource "aws_instance" "public" {
+  ami           = "ami-0662f4965dfc70aca" # 고정 AMI ID
+  instance_type = "t3.micro"
+
+  subnet_id                   = var.subnet_id
+  vpc_security_group_ids      = [aws_security_group.public_ec2.id]
+  associate_public_ip_address = true # Public IP 할당
+  key_name                    = aws_key_pair.ec2.key_name
+
+  # 루트 볼륨 설정
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 20
+    encrypted   = true
   }
 
-  # Optional: User data to install Docker
+  # 간단한 초기화 스크립트
   user_data = <<-EOF
     #!/bin/bash
     apt-get update
-    apt-get install -y docker.io
-    systemctl start docker
-    systemctl enable docker
-    usermod -aG docker ubuntu
   EOF
+
+  tags = {
+    Name = var.instance_name
+    Type = "Public"
+  }
 }
 
-# Output
-output "instance_public_ip" {
-  value = aws_instance.ubuntu.public_ip
-}
+# Elastic IP 생성 및 연결
+resource "aws_eip" "public" {
+  instance = aws_instance.public.id
+  domain   = "vpc"
 
-output "ecr_login_command" {
-  value = "aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin ${data.aws_caller_identity.current.account_id}.dkr.ecr.ap-northeast-2.amazonaws.com"
+  tags = {
+    Name = "${var.instance_name}-eip"
+  }
 }
-
-# Data source for current AWS account ID
-data "aws_caller_identity" "current" {}
