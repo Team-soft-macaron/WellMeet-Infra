@@ -248,7 +248,27 @@ resource "aws_security_group" "recommendation_api_server" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
 
+resource "aws_security_group" "application_load_balancer" {
+  name        = "application-load-balancer-sg"
+  description = "Security group for Application Load Balancer"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTP traffic"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 module "batch" {
@@ -318,4 +338,34 @@ module "recommendation_api_server" {
   vpc_id             = module.vpc.vpc_id
   instance_name      = "recommendation-api-server"
   security_group_ids = [aws_security_group.recommendation_api_server.id]
+}
+
+module "alb" {
+  source          = "./modules/alb"
+  name            = "application-load-balancer"
+  vpc_id          = module.vpc.vpc_id
+  subnets         = module.vpc.public_subnets
+  security_groups = [aws_security_group.application_load_balancer.id]
+  target_groups = {
+    recommendation_api_server = {
+      name              = "recommendation-api-server"
+      port              = 8080
+      protocol          = "HTTP"
+      health_check_path = "/health"
+    }
+  }
+  target_attachments = {
+    recommendation_api_server = {
+      target_group_key = "recommendation_api_server"
+      target_id        = module.recommendation_api_server.instance_id
+      port             = 8080
+    }
+  }
+  listeners = {
+    http = {
+      port             = 80
+      protocol         = "HTTP"
+      target_group_key = "recommendation_api_server"
+    }
+  }
 }
