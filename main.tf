@@ -165,6 +165,16 @@ module "ecr_atmosphere" {
   repository_name = "atmosphere-classifier"
 }
 
+resource "aws_subnet" "private_subnet_for_recommendation_api_server" {
+  vpc_id            = module.vpc.vpc_id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = module.vpc.azs[0]
+
+  tags = {
+    Name = "private-subnet-for-recommendation-api-server"
+  }
+}
+
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
   name   = "batch-vpc"
@@ -172,7 +182,7 @@ module "vpc" {
 
   azs             = ["ap-northeast-2a", "ap-northeast-2c"]
   public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnets = ["10.0.1.0/24"]
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
@@ -181,6 +191,56 @@ resource "aws_security_group" "batch_fargate" {
   name        = "batch-fargate-sg"
   description = "Security group for AWS Batch Fargate jobs"
   vpc_id      = module.vpc.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+}
+
+# private API 서버
+resource "aws_route_table" "private_ec2_route_table" {
+  vpc_id = module.vpc.vpc_id
+
+  tags = {
+    Name = "private-ec2-route-table"
+  }
+}
+
+resource "aws_route" "private_ec2_to_nat_instance" {
+  route_table_id         = aws_route_table.private_ec2_route_table.id
+  destination_cidr_block = "0.0.0.0/0"
+  network_interface_id   = module.ec2.nat_instance_eni_id
+}
+
+resource "aws_route_table_association" "private_ec2_route_table_association" {
+  subnet_id      = aws_subnet.private_subnet_for_recommendation_api_server.id
+  route_table_id = aws_route_table.private_ec2_route_table.id
+}
+
+resource "aws_security_group" "recommendation_api_server" {
+  name        = "recommendation-api-server-sg"
+  description = "Security group for Recommendation API Server"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+    description     = "Allow SSH traffic"
+    security_groups = [module.ec2.security_group_id] # bastion host 접근 허용
+  }
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTP traffic"
+  }
 
   egress {
     from_port   = 0
@@ -236,7 +296,7 @@ module "batch" {
 module "postgres" {
   source                     = "./modules/postgres"
   subnet_id                  = module.vpc.private_subnets[0]
-  allowed_security_group_ids = [module.ec2.security_group_id]
+  allowed_security_group_ids = [module.ec2.security_group_id, aws_security_group.recommendation_api_server.id]
   # db_password                = var.db_password
   # db_name                    = "wellmeet"
   # db_username                = "postgres"
@@ -250,4 +310,12 @@ module "ec2" {
   subnet_id     = module.vpc.public_subnets[0]
   vpc_id        = module.vpc.vpc_id
   instance_name = "ec2"
+}
+
+module "recommendation_api_server" {
+  source             = "./modules/private_ec2"
+  subnet_id          = aws_subnet.private_subnet_for_recommendation_api_server.id
+  vpc_id             = module.vpc.vpc_id
+  instance_name      = "recommendation-api-server"
+  security_group_ids = [aws_security_group.recommendation_api_server.id]
 }

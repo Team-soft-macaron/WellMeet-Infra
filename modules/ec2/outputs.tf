@@ -14,3 +14,7 @@ output "security_group_id" {
   value       = aws_security_group.public_ec2.id
 }
 
+output "nat_instance_eni_id" {
+  description = "NAT 인스턴스의 ENI ID"
+  value       = aws_instance.public.primary_network_interface_id
+}

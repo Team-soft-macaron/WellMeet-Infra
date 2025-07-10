@@ -36,6 +36,29 @@ resource "aws_security_group" "public_ec2" {
     description = "SSH access from anywhere"
   }
 
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP access from anywhere"
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS access from anywhere"
+  }
+
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # 모든 아웃바운드 트래픽 허용
   egress {
     from_port   = 0
@@ -55,6 +78,7 @@ resource "aws_instance" "public" {
   ami           = "ami-0662f4965dfc70aca" # 고정 AMI ID
   instance_type = "t3.micro"
 
+  source_dest_check           = false
   subnet_id                   = var.subnet_id
   vpc_security_group_ids      = [aws_security_group.public_ec2.id]
   associate_public_ip_address = true # Public IP 할당
