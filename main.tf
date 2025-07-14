@@ -2,12 +2,20 @@ provider "aws" {
   region = "ap-northeast-2"
 }
 
-resource "aws_lambda_permission" "allow_s3" {
+resource "aws_lambda_permission" "allow_restaurant_s3" {
   statement_id  = "AllowExecutionFromS3"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.submit_batch_job.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = "arn:aws:s3:::naver-map-restaurant"
+}
+
+resource "aws_lambda_permission" "allow_review_s3" {
+  statement_id  = "AllowExecutionFromS3"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.save_reviews.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = "arn:aws:s3:::naver-map-review"
 }
 
 # AWS batch를 식당마다 실행하기 위한 Lambda
@@ -36,7 +44,9 @@ resource "aws_iam_role_policy" "lambda_batch_policy" {
         Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
         Resource = [
           module.s3_restaurant.bucket_arn,
-          "${module.s3_restaurant.bucket_arn}/*"
+          "${module.s3_restaurant.bucket_arn}/*",
+          module.s3_review.bucket_arn,
+          "${module.s3_review.bucket_arn}/*"
         ]
       },
       {
@@ -98,13 +108,7 @@ resource "aws_lambda_function" "submit_batch_job" {
     variables = {
       BATCH_JOB_QUEUE      = aws_batch_job_queue.review_crawler.name
       BATCH_JOB_DEFINITION = module.batch.job_definition_arn
-
-      # RDS 연결 정보
-      # DB_HOST     = module.postgres.postgres_private_ip
-      # DB_PORT     = 5432
-      # DB_NAME     = module.postgres.postgres_db_name
-      # DB_USER     = module.postgres.postgres_db_username
-      # DB_PASSWORD = var.db_password
+      API_URL              = var.api_url
     }
   }
 }
@@ -119,6 +123,12 @@ resource "aws_lambda_function" "save_reviews" {
 
   s3_bucket = module.s3_lambda_functions.bucket_name
   s3_key    = "save-reviews/lambda_function.zip"
+
+  environment {
+    variables = {
+      API_URL = var.api_url
+    }
+  }
 }
 
 module "s3_restaurant" {
@@ -126,12 +136,15 @@ module "s3_restaurant" {
   bucket_name          = "naver-map-restaurant"
   enable_notification  = true
   lambda_function_arn  = aws_lambda_function.submit_batch_job.arn
-  lambda_permission_id = aws_lambda_permission.allow_s3.id
+  lambda_permission_id = aws_lambda_permission.allow_restaurant_s3.id
 }
 
 module "s3_review" {
-  source      = "./modules/s3"
-  bucket_name = "naver-map-review"
+  source               = "./modules/s3"
+  bucket_name          = "naver-map-review"
+  enable_notification  = true
+  lambda_function_arn  = aws_lambda_function.save_reviews.arn
+  lambda_permission_id = aws_lambda_permission.allow_review_s3.id
 }
 
 module "s3_atmosphere" {
