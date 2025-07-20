@@ -112,10 +112,18 @@ resource "aws_batch_compute_environment" "fargate_spot" {
     aws_iam_role_policy_attachment.batch_service_role_policy
   ]
 }
-
 # Job Queue
-resource "aws_batch_job_queue" "main" {
-  name     = "fargate-spot-job-queue"
+resource "aws_batch_job_queue" "restaurant_crawler" {
+  name     = "fargate-spot-restaurant-crawler-job-queue"
+  state    = "ENABLED"
+  priority = 1
+  compute_environment_order {
+    order               = 1
+    compute_environment = aws_batch_compute_environment.fargate_spot.arn
+  }
+}
+resource "aws_batch_job_queue" "review_crawler" {
+  name     = "fargate-spot-review-crawler-job-queue"
   state    = "ENABLED"
   priority = 1
   compute_environment_order {
@@ -125,14 +133,14 @@ resource "aws_batch_job_queue" "main" {
 }
 
 # Job Definition
-resource "aws_batch_job_definition" "main" {
-  name = "batch-job-definition"
+resource "aws_batch_job_definition" "review_crawler" {
+  name = "batch-review-job-definition"
   type = "container"
 
   platform_capabilities = ["FARGATE"]
 
   container_properties = jsonencode({
-    image = var.ecr_repository_url
+    image = var.review_crawler_ecr_repository_url
 
     fargatePlatformConfiguration = {
       platformVersion = "LATEST"
@@ -166,7 +174,7 @@ resource "aws_batch_job_definition" "main" {
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        "awslogs-group"         = "/aws/batch/job"
+        "awslogs-group"         = "/aws/batch/review-crawler"
         "awslogs-region"        = var.aws_region
         "awslogs-stream-prefix" = "batch-job"
       }
@@ -179,7 +187,7 @@ resource "aws_batch_job_definition" "main" {
       },
       {
         name  = "S3_BUCKET_NAME"
-        value = var.s3_bucket_name
+        value = var.review_crawler_s3_bucket_name
       },
       {
         name  = "PYTHONUNBUFFERED"
@@ -189,7 +197,76 @@ resource "aws_batch_job_definition" "main" {
   })
 }
 
-resource "aws_cloudwatch_log_group" "batch_logs" {
-  name              = "/aws/batch/job"
+resource "aws_batch_job_definition" "restaurant_crawler" {
+  name = "batch-restaurant-job-definition"
+  type = "container"
+
+  platform_capabilities = ["FARGATE"]
+
+  container_properties = jsonencode({
+    image = var.restaurant_crawler_ecr_repository_url
+
+    fargatePlatformConfiguration = {
+      platformVersion = "LATEST"
+    }
+
+    resourceRequirements = [
+      {
+        type  = "VCPU"
+        value = "2"
+      },
+      {
+        type  = "MEMORY"
+        value = "8192" # 8GB in MB
+      }
+    ]
+
+    executionRoleArn = aws_iam_role.ecs_task_execution_role.arn
+    jobRoleArn       = aws_iam_role.batch_job_role.arn
+
+    # 실행 제한 시간 30분 (1800초)
+    timeout = {
+      attemptDurationSeconds = 1800
+    }
+
+    # public IP 할당하여 인터넷 연결 허용
+    networkConfiguration = {
+      assignPublicIp = "ENABLED"
+    }
+
+    # 로그 설정
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = "/aws/batch/restaurant-crawler"
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "batch-job"
+      }
+    }
+
+    environment = [
+      {
+        name  = "AWS_REGION"
+        value = var.aws_region
+      },
+      {
+        name  = "S3_BUCKET_NAME"
+        value = var.restaurant_crawler_s3_bucket_name
+      },
+      {
+        name  = "PYTHONUNBUFFERED"
+        value = "1"
+      }
+    ]
+  })
+}
+
+resource "aws_cloudwatch_log_group" "review_crawler_logs" {
+  name              = "/aws/batch/review-crawler"
+  retention_in_days = 7
+}
+
+resource "aws_cloudwatch_log_group" "restaurant_crawler_logs" {
+  name              = "/aws/batch/restaurant-crawler"
   retention_in_days = 7
 }

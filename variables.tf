@@ -15,7 +15,7 @@ variable "aws_region_env" {
   type        = string
 }
 
-variable "api_url" {
-  description = "API URL for Lambda environment variable"
-  type        = string
-}
+# variable "api_url" {
+#   description = "API URL for Lambda environment variable"
+#   type        = string
+# }

@@ -1,5 +1,11 @@
 # Variables
-variable "ecr_repository_url" {
+variable "review_crawler_ecr_repository_url" {
+  description = "ECR repository URL for the container image"
+  type        = string
+  default     = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/my-app:latest"
+}
+
+variable "restaurant_crawler_ecr_repository_url" {
   description = "ECR repository URL for the container image"
   type        = string
   default     = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/my-app:latest"
@@ -20,7 +26,12 @@ variable "aws_region" {
   type        = string
 }
 
-variable "s3_bucket_name" {
+variable "review_crawler_s3_bucket_name" {
+  description = "S3 bucket name for upload"
+  type        = string
+}
+
+variable "restaurant_crawler_s3_bucket_name" {
   description = "S3 bucket name for upload"
   type        = string
 }
