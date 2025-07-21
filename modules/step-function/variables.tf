@@ -30,3 +30,7 @@ variable "embedding_vector_bucket_directory" {
   type    = string
   default = "embedding_vector"
 }
+
+variable "openai_api_key" {
+  type = string
+}

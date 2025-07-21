@@ -153,4 +153,5 @@ module "step_function" {
   source            = "./modules/step-function"
   public_subnet_ids = module.vpc.public_subnets
   vpc_id            = module.vpc.vpc_id
+  openai_api_key    = var.openai_api_key
 }
