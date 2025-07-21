@@ -1,20 +1,18 @@
-# 식당 크롤링 결과 저장
-module "s3_restaurant" {
-  source              = "../s3"
-  bucket_name         = "naver-map-restaurant"
-  enable_notification = false
-  # lambda_function_arn  = aws_lambda_function.submit_batch_job.arn
-  # lambda_permission_id = aws_lambda_permission.allow_restaurant_s3.id
+module "s3_data_pipeline" {
+  source      = "../s3"
+  bucket_name = var.S3_bucket_name
 }
+# # 식당 크롤링 결과 저장
+# module "s3_restaurant" {
+#   source              = "../s3"
+#   bucket_name         = "naver-map-restaurant"
+# }
 
-# 리뷰 크롤링 결과 저장
-module "s3_review" {
-  source              = "../s3"
-  bucket_name         = "naver-map-review"
-  enable_notification = false
-  # lambda_function_arn  = aws_lambda_function.save_reviews.arn
-  # lambda_permission_id = aws_lambda_permission.allow_review_s3.id
-}
+# # 리뷰 크롤링 결과 저장
+# module "s3_review" {
+#   source              = "../s3"
+#   bucket_name         = "naver-map-review"
+# }
 
 # 식당 크롤링 docker 이미지 저장
 module "ecr_restaurant" {
@@ -41,13 +39,7 @@ resource "aws_security_group" "batch_fargate" {
 
 }
 
-variable "vpc_id" {
-  type = string
-}
 
-variable "public_subnet_ids" {
-  type = list(string)
-}
 
 # 식당 크롤링, 리뷰 크롤링 job
 module "batch" {
@@ -55,8 +47,9 @@ module "batch" {
   subnet_ids                            = var.public_subnet_ids
   security_group_ids                    = [aws_security_group.batch_fargate.id]
   aws_region                            = "ap-northeast-2"
-  review_crawler_s3_bucket_name         = module.s3_review.bucket_name
-  restaurant_crawler_s3_bucket_name     = module.s3_restaurant.bucket_name
+  S3_bucket_name                        = var.S3_bucket_name
+  restaurant_bucket_directory           = var.restaurant_bucket_directory
+  review_bucket_directory               = var.review_bucket_directory
   review_crawler_ecr_repository_url     = module.ecr_review.repository_url
   restaurant_crawler_ecr_repository_url = module.ecr_restaurant.repository_url
 
@@ -137,7 +130,7 @@ resource "aws_iam_role_policy" "lambda_extract_policy" {
       {
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
-        Resource = "${module.s3_restaurant.bucket_arn}/*"
+        Resource = "${module.s3_data_pipeline.bucket_arn}/*"
       },
       {
         Effect   = "Allow"
@@ -166,7 +159,7 @@ resource "aws_lambda_function" "extract_place_ids" {
 
   environment {
     variables = {
-      RESTAURANT_BUCKET = module.s3_restaurant.bucket_name
+      S3_BUCKET_NAME = module.s3_data_pipeline.bucket_name
     }
   }
 }
@@ -215,8 +208,12 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
                 "Value.$" = "$.query"
               },
               {
-                Name  = "RESTAURANT_S3_BUCKET_NAME"
-                Value = module.s3_restaurant.bucket_name
+                Name  = "RESTAURANT_BUCKET_DIRECTORY"
+                Value = var.restaurant_bucket_directory
+              },
+              {
+                Name  = "S3_BUCKET_NAME"
+                Value = var.S3_bucket_name
               }
             ]
           }
@@ -229,7 +226,9 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
         Type     = "Task"
         Resource = aws_lambda_function.extract_place_ids.arn
         Parameters = {
-          "SEARCH_QUERY.$" = "$.query"
+          "SEARCH_QUERY.$"              = "$.query"
+          "S3_BUCKET_NAME"              = var.S3_bucket_name
+          "RESTAURANT_BUCKET_DIRECTORY" = var.restaurant_bucket_directory
         }
         ResultPath = "$.extractedResult"
         Next       = "CrawlReviews"
@@ -257,8 +256,12 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
                       "Value.$" = "$"
                     },
                     {
-                      Name  = "REVIEW_S3_BUCKET_NAME"
-                      Value = module.s3_review.bucket_name
+                      Name  = "S3_BUCKET_NAME"
+                      Value = var.S3_bucket_name
+                    },
+                    {
+                      Name  = "REVIEW_BUCKET_DIRECTORY"
+                      Value = var.review_bucket_directory
                     }
                   ]
                 }

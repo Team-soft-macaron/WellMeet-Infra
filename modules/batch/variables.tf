@@ -26,12 +26,17 @@ variable "aws_region" {
   type        = string
 }
 
-variable "review_crawler_s3_bucket_name" {
+variable "S3_bucket_name" {
   description = "S3 bucket name for upload"
   type        = string
 }
 
-variable "restaurant_crawler_s3_bucket_name" {
-  description = "S3 bucket name for upload"
+variable "restaurant_bucket_directory" {
+  description = "S3 bucket name for restaurant"
+  type        = string
+}
+
+variable "review_bucket_directory" {
+  description = "S3 bucket name for review"
   type        = string
 }

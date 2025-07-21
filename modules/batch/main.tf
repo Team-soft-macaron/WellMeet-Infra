@@ -187,7 +187,7 @@ resource "aws_batch_job_definition" "review_crawler" {
       },
       {
         name  = "S3_BUCKET_NAME"
-        value = var.review_crawler_s3_bucket_name
+        value = var.S3_bucket_name
       },
       {
         name  = "PYTHONUNBUFFERED"
@@ -251,7 +251,7 @@ resource "aws_batch_job_definition" "restaurant_crawler" {
       },
       {
         name  = "S3_BUCKET_NAME"
-        value = var.restaurant_crawler_s3_bucket_name
+        value = var.S3_bucket_name
       },
       {
         name  = "PYTHONUNBUFFERED"
