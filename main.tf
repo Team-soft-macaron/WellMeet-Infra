@@ -32,25 +32,25 @@ resource "aws_route" "private_ec2_to_nat_instance" {
 }
 
 resource "aws_route_table_association" "private_ec2_route_table_association" {
-  subnet_id      = aws_subnet.private_subnet_for_recommendation_api_server.id
+  subnet_id      = aws_subnet.private_subnet_for_api_server.id
   route_table_id = aws_route_table.private_ec2_route_table.id
 }
 
 # API 서버 private subnet
-resource "aws_subnet" "private_subnet_for_recommendation_api_server" {
+resource "aws_subnet" "private_subnet_for_api_server" {
   vpc_id            = module.vpc.vpc_id
   cidr_block        = "10.0.2.0/24"
   availability_zone = module.vpc.azs[0]
 
   tags = {
-    Name = "private-subnet-for-recommendation-api-server"
+    Name = "private-subnet-for-api-server"
   }
 }
 
 # API 서버 보안 그룹
-resource "aws_security_group" "recommendation_api_server" {
-  name        = "recommendation-api-server-sg"
-  description = "Security group for Recommendation API Server"
+resource "aws_security_group" "api_server" {
+  name        = "api-server-sg"
+  description = "Security group for API Server"
   vpc_id      = module.vpc.vpc_id
 
   ingress {
@@ -110,16 +110,16 @@ module "ec2" {
 # 추천 API 서버
 module "recommendation_api_server" {
   source             = "./modules/private_ec2"
-  subnet_id          = aws_subnet.private_subnet_for_recommendation_api_server.id
+  subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
   instance_name      = "recommendation-api-server"
-  security_group_ids = [aws_security_group.recommendation_api_server.id]
+  security_group_ids = [aws_security_group.api_server.id]
 }
 
 module "postgres" {
   source                     = "./modules/postgres"
   subnet_id                  = module.vpc.private_subnets[0]
-  allowed_security_group_ids = [module.ec2.security_group_id, aws_security_group.recommendation_api_server.id]
+  allowed_security_group_ids = [module.ec2.security_group_id, aws_security_group.api_server.id]
   vpc_id                     = module.vpc.vpc_id
   ami_id                     = "ami-0aa6e95177252a286"
   instance_name              = "recommendation"
@@ -165,10 +165,10 @@ module "step_function" {
 # wellmeet API 서버
 module "wellmeet_api_server" {
   source             = "./modules/private_ec2"
-  subnet_id          = aws_subnet.private_subnet_for_recommendation_api_server.id
+  subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
   instance_name      = "wellmeet-api-server"
-  security_group_ids = [aws_security_group.recommendation_api_server.id]
+  security_group_ids = [aws_security_group.api_server.id]
 }
 
 # RDS 보안 그룹
@@ -182,7 +182,7 @@ resource "aws_security_group" "rds" {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.recommendation_api_server.id]
+    security_groups = [aws_security_group.api_server.id]
     description     = "Allow MySQL access from API servers"
   }
 
