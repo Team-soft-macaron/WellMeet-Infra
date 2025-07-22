@@ -15,7 +15,13 @@ variable "aws_region_env" {
   type        = string
 }
 
-variable "api_url" {
-  description = "API URL for Lambda environment variable"
+variable "openai_api_key" {
+  description = "OpenAI API key for Lambda environment variable"
   type        = string
+  sensitive   = true
 }
+
+# variable "api_url" {
+#   description = "API URL for Lambda environment variable"
+#   type        = string
+# }
