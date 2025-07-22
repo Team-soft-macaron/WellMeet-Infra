@@ -21,6 +21,12 @@ variable "openai_api_key" {
   sensitive   = true
 }
 
+variable "wellmeet_db_password" {
+  description = "Wellmeet DB password for Lambda environment variable"
+  type        = string
+  sensitive   = true
+}
+
 # variable "api_url" {
 #   description = "API URL for Lambda environment variable"
 #   type        = string
