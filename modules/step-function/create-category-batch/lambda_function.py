@@ -1,17 +1,18 @@
+from datetime import datetime
 import json
 import os
 import boto3
 from typing import List, Dict, Any
-from openai import OpenAI
 import logging
 import sys
+import urllib.request
+import urllib.parse
+import uuid
 
 # 환경 변수
-BUCKET_DIRECTORY = os.getenv("BUCKET_DIRECTORY")
+REVIEW_BUCKET_DIRECTORY = os.getenv("REVIEW_BUCKET_DIRECTORY")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-
-# OpenAI 클라이언트 초기화
-client = OpenAI()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # API 키 환경변수 추가
 
 # S3 클라이언트 초기화
 s3_client = boto3.client("s3")
@@ -26,45 +27,40 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def lambda_handler(event, context):
+def handler(event, context):
     S3_KEY = event["S3_KEY"]
-    print(S3_KEY)
+    logger.info(f"S3_KEY: {S3_KEY}")
     """Lambda 1: 카테고리 추출 배치 생성만 수행"""
     try:
         logger.info("=== 카테고리 추출 배치 생성 시작 ===")
-
         # 1. S3에서 리뷰 데이터 가져오기
         logger.info("S3에서 리뷰 데이터 로딩 중...")
-        reviews = get_reviews_from_s3()
+        reviews = get_reviews_from_s3(REVIEW_BUCKET_DIRECTORY, S3_KEY)
         logger.info(f"S3에서 {len(reviews)}개의 리뷰를 성공적으로 로드했습니다")
-
         # 2. 카테고리 추출을 위한 배치 작업 생성
         logger.info("카테고리 추출 배치 작업 생성 중...")
         extraction_batch_id = create_extraction_batch(reviews)
         logger.info(f"추출 배치 작업이 생성되었습니다. 배치 ID: {extraction_batch_id}")
-
         # Step Function으로 전달할 데이터
         return {
             "statusCode": 200,
             "body": {
                 "extraction_batch_id": extraction_batch_id,
-                "reviews": reviews,  # 리뷰 리스트도 함께 반환
                 "review_count": len(reviews),
             },
         }
-
     except Exception as e:
         logger.error("배치 생성 중 오류가 발생했습니다")
         logger.error(f"오류 내용: {str(e)}")
-        return {"statusCode": 500, "body": {"error": str(e)}}
+        raise Exception(f"Failed to create category batch: {str(e)}")
 
 
-def get_reviews_from_s3() -> List[Dict[str, Any]]:
+def get_reviews_from_s3(BUCKET_DIRECTORY: str, S3_KEY: str) -> List[Dict[str, Any]]:
     """S3에서 리뷰 데이터를 가져오는 함수"""
     try:
-        response = s3_client.get_object(
-            Bucket=S3_BUCKET_NAME, Key=BUCKET_DIRECTORY + S3_KEY
-        )
+        key = f"{BUCKET_DIRECTORY}/{S3_KEY}.json"
+        logger.info(f"key: {key}")
+        response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
         content = response["Body"].read().decode("utf-8")
         reviews = json.loads(content)
         return reviews
@@ -80,7 +76,7 @@ def create_extraction_batch(reviews: List[Dict[str, Any]]) -> str:
     with open(batch_input_file_path, "w", encoding="utf-8") as f:
         for review in reviews:
             request = {
-                "custom_id": review["id"],
+                "custom_id": f"{review['id']}_{uuid.uuid4()}",
                 "method": "POST",
                 "url": "/v1/chat/completions",
                 "body": {
@@ -108,18 +104,72 @@ def create_extraction_batch(reviews: List[Dict[str, Any]]) -> str:
             }
             f.write(json.dumps(request, ensure_ascii=False) + "\n")
 
-    # 파일 업로드 및 배치 작업 생성
+    # 파일 업로드 - urllib 사용
     with open(batch_input_file_path, "rb") as f:
-        batch_input_file = client.files.create(file=f, purpose="batch")
+        file_content = f.read()
 
-    batch = client.batches.create(
-        input_file_id=batch_input_file.id,
-        endpoint="/v1/chat/completions",
-        completion_window="24h",
+    # multipart/form-data 경계 문자열
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+
+    # multipart 본문 생성
+    body = []
+    body.append(f"------{boundary}".encode())
+    body.append(b'Content-Disposition: form-data; name="purpose"')
+    body.append(b"")
+    body.append(b"batch")
+    body.append(f"------{boundary}".encode())
+    body.append(
+        b'Content-Disposition: form-data; name="file"; filename="batch_input.jsonl"'
+    )
+    body.append(b"Content-Type: application/jsonl")
+    body.append(b"")
+    body.append(file_content)
+    body.append(f"------{boundary}--".encode())
+
+    body_data = b"\r\n".join(body)
+
+    # 파일 업로드 요청
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/files",
+        data=body_data,
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": f"multipart/form-data; boundary=----{boundary}",
+        },
     )
 
-    return batch.id
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode())
+            file_id = result["id"]
+    except urllib.error.HTTPError as e:
+        raise Exception(f"File upload failed: {e.read().decode()}")
+
+    # 배치 작업 생성 - urllib 사용
+    batch_data = json.dumps(
+        {
+            "input_file_id": file_id,
+            "endpoint": "/v1/chat/completions",
+            "completion_window": "24h",
+        }
+    ).encode("utf-8")
+
+    batch_req = urllib.request.Request(
+        "https://api.openai.com/v1/batches",
+        data=batch_data,
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(batch_req) as response:
+            result = json.loads(response.read().decode())
+            return result["id"]
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Batch creation failed: {e.read().decode()}")
 
 
 if __name__ == "__main__":
-    lambda_handler(None, None)
+    handler(None, None)

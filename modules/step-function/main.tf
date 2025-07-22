@@ -28,8 +28,6 @@ resource "aws_security_group" "batch_fargate" {
 
 }
 
-
-
 # 식당 크롤링, 리뷰 크롤링 job
 module "batch" {
   source                                = "../batch"
@@ -72,34 +70,6 @@ resource "aws_iam_role" "lambda_function_role" {
     }]
   })
 }
-
-# resource "aws_iam_role_policy" "lambda_function_policy" {
-#   name = "lambda-function-policy"
-#   role = aws_iam_role.lambda_function_role.id
-
-#   policy = jsonencode({
-#     Version = "2012-10-17"
-#     Statement = [
-#       {
-#         Effect = "Allow"
-#         Action = [
-#           "s3:GetObject",
-#           "s3:PutObject"
-#         ]
-#         Resource = "${module.s3_data_pipeline.bucket_arn}/*"
-#       },
-#       {
-#         Effect = "Allow"
-#         Action = [
-#           "logs:CreateLogGroup",
-#           "logs:CreateLogStream",
-#           "logs:PutLogEvents"
-#         ]
-#         Resource = "arn:aws:logs:*:*:*"
-#       }
-#     ]
-#   })
-# }
 
 resource "aws_iam_role_policy" "step_functions_policy" {
   name = "step-functions-crawling-policy"
@@ -147,9 +117,12 @@ resource "aws_iam_role_policy" "lambda_function_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = "${module.s3_data_pipeline.bucket_arn}/*"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
+        Resource = [
+          "${module.s3_data_pipeline.bucket_arn}/*",
+          "${module.s3_data_pipeline.bucket_arn}"
+        ]
       },
       {
         Effect   = "Allow"
@@ -215,9 +188,9 @@ resource "aws_lambda_function" "create_category_batch" {
 
   environment {
     variables = {
-      CATEGORY_BUCKET_DIRECTORY = var.category_bucket_directory
-      S3_BUCKET_NAME            = module.s3_data_pipeline.bucket_name
-      OPENAI_API_KEY            = var.openai_api_key
+      REVIEW_BUCKET_DIRECTORY = var.review_bucket_directory
+      S3_BUCKET_NAME          = module.s3_data_pipeline.bucket_name
+      OPENAI_API_KEY          = var.openai_api_key
     }
   }
 }
@@ -233,9 +206,10 @@ resource "aws_lambda_function" "create_embedding_batch" {
 
   environment {
     variables = {
-      BUCKET_DIRECTORY = var.embedding_vector_bucket_directory
-      S3_BUCKET_NAME   = module.s3_data_pipeline.bucket_name
-      OPENAI_API_KEY   = var.openai_api_key
+      REVIEW_BUCKET_DIRECTORY   = var.review_bucket_directory
+      CATEGORY_BUCKET_DIRECTORY = var.category_bucket_directory
+      S3_BUCKET_NAME            = module.s3_data_pipeline.bucket_name
+      OPENAI_API_KEY            = var.openai_api_key
     }
   }
 }
@@ -251,9 +225,10 @@ resource "aws_lambda_function" "save_embedding" {
 
   environment {
     variables = {
-      S3_BUCKET_NAME   = module.s3_data_pipeline.bucket_name
-      BUCKET_DIRECTORY = var.embedding_vector_bucket_directory
-      OPENAI_API_KEY   = var.openai_api_key
+      S3_BUCKET_NAME             = module.s3_data_pipeline.bucket_name
+      CATEGORY_BUCKET_DIRECTORY  = var.category_bucket_directory
+      EMBEDDING_BUCKET_DIRECTORY = var.embedding_vector_bucket_directory
+      OPENAI_API_KEY             = var.openai_api_key
     }
   }
 }
@@ -279,97 +254,7 @@ resource "aws_batch_job_queue" "review_crawler" {
     compute_environment = module.batch.compute_environment_arn
   }
 }
-# # Step Functions State Machine
-# resource "aws_sfn_state_machine" "crawling_pipeline" {
-#   name     = "restaurant-crawling-pipeline"
-#   role_arn = aws_iam_role.step_functions_role.arn
 
-#   definition = jsonencode({
-#     Comment = "Restaurant and Review Crawling Pipeline"
-#     StartAt = "CrawlRestaurants"
-
-#     States = {
-#       CrawlRestaurants = {
-#         Type     = "Task"
-#         Resource = "arn:aws:states:::batch:submitJob.sync"
-#         Parameters = {
-#           JobDefinition = module.batch.restaurant_job_definition_arn
-#           JobName       = "restaurant-crawling"
-#           JobQueue      = aws_batch_job_queue.restaurant_crawler.name
-#           ContainerOverrides = {
-#             Environment = [
-#               {
-#                 Name      = "SEARCH_QUERY"
-#                 "Value.$" = "$.query"
-#               },
-#               {
-#                 Name  = "RESTAURANT_BUCKET_DIRECTORY"
-#                 Value = var.restaurant_bucket_directory
-#               },
-#               {
-#                 Name  = "S3_BUCKET_NAME"
-#                 Value = var.S3_bucket_name
-#               }
-#             ]
-#           }
-#         }
-#         ResultPath = "$.batchResult"
-#         Next       = "ExtractPlaceIds"
-#       }
-
-#       ExtractPlaceIds = {
-#         Type     = "Task"
-#         Resource = aws_lambda_function.extract_place_ids.arn
-#         Parameters = {
-#           "SEARCH_QUERY.$"              = "$.query"
-#           "S3_BUCKET_NAME"              = var.S3_bucket_name
-#           "RESTAURANT_BUCKET_DIRECTORY" = var.restaurant_bucket_directory
-#         }
-#         ResultPath = "$.extractedResult"
-#         Next       = "CrawlReviews"
-#       }
-
-#       CrawlReviews = {
-#         Type           = "Map"
-#         ItemsPath      = "$.extractedResult.placeIds"
-#         MaxConcurrency = 10
-
-#         Iterator = {
-#           StartAt = "CrawlSingleRestaurantReviews"
-#           States = {
-#             CrawlSingleRestaurantReviews = {
-#               Type     = "Task"
-#               Resource = "arn:aws:states:::batch:submitJob.sync"
-#               Parameters = {
-#                 JobDefinition = module.batch.review_job_definition_arn
-#                 JobName       = "review-crawling"
-#                 JobQueue      = aws_batch_job_queue.review_crawler.name
-#                 ContainerOverrides = {
-#                   Environment = [
-#                     {
-#                       Name      = "PLACE_ID"
-#                       "Value.$" = "$"
-#                     },
-#                     {
-#                       Name  = "S3_BUCKET_NAME"
-#                       Value = var.S3_bucket_name
-#                     },
-#                     {
-#                       Name  = "REVIEW_BUCKET_DIRECTORY"
-#                       Value = var.review_bucket_directory
-#                     }
-#                   ]
-#                 }
-#               }
-#               End = true
-#             }
-#           }
-#         }
-#         End = true
-#       }
-#     }
-#   })
-# }
 resource "aws_sfn_state_machine" "crawling_pipeline" {
   name     = "restaurant-crawling-pipeline"
   role_arn = aws_iam_role.step_functions_role.arn
@@ -434,7 +319,7 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
           StartAt = "CrawlSingleRestaurantReviews"
 
           States = {
-            # 1. 단일 식당 리뷰 크롤링
+            # 단일 식당 리뷰 크롤링
             CrawlSingleRestaurantReviews = {
               Type     = "Task"
               Resource = "arn:aws:states:::batch:submitJob.sync"
@@ -446,7 +331,7 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
                   Environment = [
                     {
                       Name      = "PLACE_ID"
-                      "Value.$" = "$" # 현재 place_id
+                      "Value.$" = "$.placeId" # 현재 place_id
                     },
                     {
                       Name  = "S3_BUCKET_NAME"
@@ -459,113 +344,130 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
                   ]
                 }
               }
-              # ResultPath = "$.reviewCrawlResult"
-              Next = "CreateCategoryBatchForRestaurant"
+              ResultPath = "$.reviewCrawlResult"
+              Next       = "CreateCategoryBatchForRestaurant"
             }
 
-            # 2. 해당 식당의 카테고리 추출
+            # 해당 식당의 카테고리 추출
             CreateCategoryBatchForRestaurant = {
               Type     = "Task"
               Resource = "arn:aws:states:::lambda:invoke"
               Parameters = {
                 FunctionName = aws_lambda_function.create_category_batch.arn
                 Payload = {
-                  "S3_KEY" = "$"
+                  "S3_KEY.$" = "$.placeId"
                 }
               }
-              OutputPath = "$.Payload"
-              Next       = "WaitForCategoryBatch"
+              ResultSelector = {
+                "statusCode.$" = "$.Payload.statusCode"
+                "body.$"       = "$.Payload.body"
+              }
+              ResultPath = "$.categoryResult"
+              Next       = "CheckCategoryAndCreateEmbedding"
             }
 
-            # 3. 카테고리 배치 대기
-            WaitForCategoryBatch = {
-              Type    = "Wait"
-              Seconds = 30
-              Next    = "CheckCategoryAndCreateEmbedding"
-            }
-
-            # 4. 카테고리 확인 및 임베딩 생성
+            # 카테고리 확인 및 임베딩 생성
             CheckCategoryAndCreateEmbedding = {
               Type     = "Task"
               Resource = "arn:aws:states:::lambda:invoke"
               Parameters = {
                 FunctionName = aws_lambda_function.create_embedding_batch.arn
                 Payload = {
-                  "body.$" = "$",
+                  "S3_KEY.$" = "$.placeId",
+                  "body.$"   = "$.categoryResult.body",
                 }
               }
-              OutputPath = "$.Payload"
-              Retry = [{
-                ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException"]
-                IntervalSeconds = 3600
-                MaxAttempts     = 25
-                BackoffRate     = 1.0
-              }]
-              Next = "CheckCategoryStatus"
+              ResultSelector = {
+                "statusCode.$" = "$.Payload.statusCode"
+                "body.$"       = "$.Payload.body"
+              }
+              ResultPath = "$.embeddingRequestResult"
+              Next       = "EvaluateEmbeddingResult"
             }
 
-            # 5. 상태 확인
-            CheckCategoryStatus = {
+            # 임베딩 결과 평가
+            EvaluateEmbeddingResult = {
               Type = "Choice"
-              Choices = [{
-                Variable      = "$.statusCode"
-                NumericEquals = 500
-                Next          = "WaitAndRetryCategory"
-              }]
-              Default = "WaitForEmbeddingBatch"
+              Choices = [
+                {
+                  Variable      = "$.embeddingRequestResult.statusCode"
+                  NumericEquals = 202
+                  Next          = "WaitForEmbedding"
+                },
+                {
+                  Variable      = "$.embeddingRequestResult.statusCode"
+                  NumericEquals = 200
+                  Next          = "CheckEmbeddingAndSave"
+                }
+              ]
+              Default = "HandleEmbeddingError"
             }
 
-            WaitAndRetryCategory = {
+            # 임베딩 대기
+            WaitForEmbedding = {
               Type    = "Wait"
-              Seconds = 30
+              Seconds = 1800
               Next    = "CheckCategoryAndCreateEmbedding"
             }
 
-            # 6. 임베딩 대기
-            WaitForEmbeddingBatch = {
-              Type    = "Wait"
-              Seconds = 30
-              Next    = "CheckEmbeddingAndSave"
+            # 임베딩 에러 처리
+            HandleEmbeddingError = {
+              Type   = "Pass"
+              Result = "Embedding failed"
+              Next   = "RestaurantProcessComplete"
             }
 
-            # 7. 임베딩 확인 및 저장
+            # 임베딩 확인 및 저장
             CheckEmbeddingAndSave = {
               Type     = "Task"
               Resource = "arn:aws:states:::lambda:invoke"
               Parameters = {
                 FunctionName = aws_lambda_function.save_embedding.arn
                 Payload = {
-                  "body.$" = "$"
+                  "S3_KEY.$" = "$.placeId",
+                  "body.$"   = "$.embeddingRequestResult.body"
                 }
               }
-              OutputPath = "$.Payload"
-              Retry = [{
-                ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException"]
-                IntervalSeconds = 3600
-                MaxAttempts     = 25
-                BackoffRate     = 1.0
-              }]
-              Next = "CheckEmbeddingStatus"
+              ResultSelector = {
+                "statusCode.$" = "$.Payload.statusCode"
+                "body.$"       = "$.Payload.body"
+              }
+              ResultPath = "$.saveEmbeddingResult"
+              Next       = "EvaluateSaveResult"
             }
-
-            # 8. 최종 상태 확인
-            CheckEmbeddingStatus = {
+            # 저장 결과 평가
+            EvaluateSaveResult = {
               Type = "Choice"
-              Choices = [{
-                Variable      = "$.statusCode"
-                NumericEquals = 202
-                Next          = "WaitAndRetryEmbedding"
-              }]
-              Default = "RestaurantProcessComplete"
+              Choices = [
+                {
+                  Variable      = "$.saveEmbeddingResult.statusCode"
+                  NumericEquals = 202
+                  Next          = "WaitForSave"
+                },
+                {
+                  Variable      = "$.saveEmbeddingResult.statusCode"
+                  NumericEquals = 200
+                  Next          = "RestaurantProcessComplete"
+                }
+              ]
+              Default = "HandleSaveError"
             }
 
-            WaitAndRetryEmbedding = {
+            # 저장 대기
+            WaitForSave = {
               Type    = "Wait"
-              Seconds = 30
+              Seconds = 1800
               Next    = "CheckEmbeddingAndSave"
             }
 
-            # 9. 단일 식당 처리 완료
+            # 저장 에러 처리
+            HandleSaveError = {
+              Type   = "Pass"
+              Result = "Save failed"
+              Next   = "RestaurantProcessComplete"
+            }
+
+            # 단일 식당 처리 완료
             RestaurantProcessComplete = {
               Type   = "Pass"
               Result = "Restaurant processing completed"
@@ -573,7 +475,6 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
             }
           }
         }
-
         Next = "AllRestaurantsComplete"
       }
 
