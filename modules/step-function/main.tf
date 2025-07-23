@@ -90,7 +90,9 @@ resource "aws_iam_role_policy" "step_functions_policy" {
           aws_lambda_function.extract_place_ids.arn,
           aws_lambda_function.create_category_batch.arn,
           aws_lambda_function.create_embedding_batch.arn,
-          aws_lambda_function.save_embedding.arn
+          aws_lambda_function.save_embedding.arn,
+          aws_lambda_function.save_restaurant_to_db.arn,
+          aws_lambda_function.save_review_to_db.arn
         ]
       },
       # 👇 이 부분을 추가
@@ -164,6 +166,12 @@ data "archive_file" "save_restaurant_to_db_zip" {
   output_path = "${path.module}/save_restaurant_to_db.zip"
 }
 
+data "archive_file" "save_review_to_db_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/save_review_to_db"
+  output_path = "${path.module}/save_review_to_db.zip"
+}
+
 resource "aws_lambda_function" "extract_place_ids" {
   filename         = data.archive_file.extract_place_ids_zip.output_path
   function_name    = "extract-place-ids-function"
@@ -201,6 +209,32 @@ resource "aws_lambda_function" "save_restaurant_to_db" {
       RECOMMEND_DB_PASSWORD  = var.recommend_db_password
       RECOMMEND_DB_NAME      = var.recommend_db_name
       RECOMMEND_DB_PORT      = var.recommend_db_port
+    }
+  }
+  vpc_config {
+    subnet_ids         = var.private_subnets_for_lambda
+    security_group_ids = [aws_security_group.save_restaurant_to_db_lambda_sg.id]
+  }
+  layers = [aws_lambda_layer_version.db_layer.arn]
+}
+
+resource "aws_lambda_function" "save_review_to_db" {
+  filename         = data.archive_file.save_review_to_db_zip.output_path
+  function_name    = "save-review-to-db-function"
+  role             = aws_iam_role.access_rds_role.arn
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 300
+  source_code_hash = data.archive_file.save_review_to_db_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET_NAME        = module.s3_data_pipeline.bucket_name
+      RECOMMEND_DB_HOST     = var.recommend_db_host
+      RECOMMEND_DB_USER     = var.recommend_db_user
+      RECOMMEND_DB_PASSWORD = var.recommend_db_password
+      RECOMMEND_DB_NAME     = var.recommend_db_name
+      RECOMMEND_DB_PORT     = var.recommend_db_port
     }
   }
   vpc_config {
@@ -465,6 +499,21 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
           }
         }
         ResultPath = "$.batchResult"
+        Next       = "SaveRestaurantsToDB"
+      }
+
+      SaveRestaurantsToDB = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.save_restaurant_to_db.arn
+          Payload = {
+            "SEARCH_QUERY.$" = "$.query"
+            "S3_DIRECTORY"   = var.restaurant_bucket_directory
+            "S3_BUCKET_NAME" = var.S3_bucket_name
+          }
+        }
+        ResultPath = "$.saveRestaurantResult"
         Next       = "ExtractPlaceIds"
       }
 
@@ -623,7 +672,7 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
                 {
                   Variable      = "$.saveEmbeddingResult.statusCode"
                   NumericEquals = 200
-                  Next          = "RestaurantProcessComplete"
+                  Next          = "SaveReviewsToDB"
                 }
               ]
               Default = "HandleSaveError"
@@ -641,6 +690,22 @@ resource "aws_sfn_state_machine" "crawling_pipeline" {
               Type   = "Pass"
               Result = "Save failed"
               Next   = "RestaurantProcessComplete"
+            }
+
+            # 리뷰 데이터 DB 저장
+            SaveReviewsToDB = {
+              Type     = "Task"
+              Resource = "arn:aws:states:::lambda:invoke"
+              Parameters = {
+                FunctionName = aws_lambda_function.save_review_to_db.arn
+                Payload = {
+                  "SEARCH_QUERY.$" = "$.placeId"                           # placeId를 파일명으로 사용
+                  "S3_DIRECTORY"   = var.embedding_vector_bucket_directory # 임베딩 디렉토리
+                  "S3_BUCKET_NAME" = var.S3_bucket_name
+                }
+              }
+              ResultPath = "$.saveReviewResult"
+              Next       = "RestaurantProcessComplete"
             }
 
             # 단일 식당 처리 완료
