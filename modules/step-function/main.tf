@@ -158,6 +158,11 @@ data "archive_file" "save_embedding_zip" {
   output_path = "${path.module}/save-embedding.zip"
 }
 
+data "archive_file" "save_restaurant_to_db_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/save_restaurant_to_db"
+  output_path = "${path.module}/save_restaurant_to_db.zip"
+}
 
 resource "aws_lambda_function" "extract_place_ids" {
   filename         = data.archive_file.extract_place_ids_zip.output_path
@@ -173,6 +178,32 @@ resource "aws_lambda_function" "extract_place_ids" {
       S3_BUCKET_NAME = module.s3_data_pipeline.bucket_name
     }
   }
+}
+
+# DB 저장 Lambda
+resource "aws_lambda_function" "save_restaurant_to_db" {
+  filename         = data.archive_file.save_restaurant_to_db_zip.output_path
+  function_name    = "save-restaurant-to-db-function"
+  role             = aws_iam_role.access_rds_role.arn
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 300
+  source_code_hash = data.archive_file.save_restaurant_to_db_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET_NAME = module.s3_data_pipeline.bucket_name
+      DB_HOST        = var.restaurant_db_host
+      DB_USER        = var.restaurant_db_user
+      DB_PASSWORD    = var.restaurant_db_password
+      DB_NAME        = var.restaurant_db_name
+    }
+  }
+  vpc_config {
+    subnet_ids         = var.private_subnets_for_lambda
+    security_group_ids = [aws_security_group.save_restaurant_to_db_lambda_sg.id]
+  }
+  layers = [aws_lambda_layer_version.pymysql_layer.arn]
 }
 
 
@@ -233,7 +264,6 @@ resource "aws_lambda_function" "save_embedding" {
   }
 }
 
-# Review Crawler Job Queue
 resource "aws_batch_job_queue" "restaurant_crawler" {
   name     = "restaurant-crawler-queue"
   state    = "ENABLED"
@@ -252,6 +282,148 @@ resource "aws_batch_job_queue" "review_crawler" {
   compute_environment_order {
     order               = 1
     compute_environment = module.batch.compute_environment_arn
+  }
+}
+
+# 마지막 DB 저장을 위해 필요한 package lambda layer
+resource "terraform_data" "pymysql_layer_builder" {
+  triggers_replace = {
+    requirements = filemd5("${path.module}/requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      docker run --rm \
+        -v ${abspath(path.module)}:/work \
+        -w /work \
+        --entrypoint /bin/bash \
+        public.ecr.aws/lambda/python:3.9 \
+        -c '
+          rm -rf layer
+          mkdir -p layer/python
+          pip install -r requirements.txt -t layer/python --no-cache-dir
+          cd layer
+          yum install -y zip
+          zip -r pymysql-layer.zip python/
+        '
+    EOT
+  }
+}
+
+# Lambda Layer 생성
+resource "aws_lambda_layer_version" "pymysql_layer" {
+  filename            = "${path.module}/layer/pymysql-layer.zip"
+  layer_name          = "pymysql-layer"
+  compatible_runtimes = ["python3.9"]
+
+  depends_on = [terraform_data.pymysql_layer_builder]
+}
+
+resource "aws_iam_role" "access_rds_role" {
+  name = "access-rds-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "lambda_all_permissions" {
+  name = "lambda-all-permissions"
+  role = aws_iam_role.access_rds_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:AssignPrivateIpAddresses",
+          "ec2:UnassignPrivateIpAddresses"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${module.s3_data_pipeline.bucket_name}",
+          "arn:aws:s3:::${module.s3_data_pipeline.bucket_name}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "access_s3_role_policy" {
+  name = "access-s3-role-policy"
+  role = aws_iam_role.lambda_function_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
+        Resource = [
+          "${module.s3_data_pipeline.bucket_arn}/*",
+          "${module.s3_data_pipeline.bucket_arn}"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# # VPC 내에서 실행되는 Lambda를 위한 권한
+# resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
+#   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+#   role       = aws_iam_role.access_rds_role.name
+# }
+
+# resource "aws_iam_role_policy_attachment" "access_s3_role_policy_attachment" {
+#   policy_arn = aws_iam_role_policy.lambda_function_policy.arn
+#   role       = aws_iam_role.access_rds_role.name
+# }
+resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  role       = aws_iam_role.access_rds_role.name
+}
+
+# # 최소한의 보안 그룹
+resource "aws_security_group" "save_restaurant_to_db_lambda_sg" {
+  name   = "lambda-sg"
+  vpc_id = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 

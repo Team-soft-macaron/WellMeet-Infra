@@ -22,3 +22,18 @@ output "arn" {
   description = "RDS 인스턴스 ARN"
   value       = aws_db_instance.this.arn
 }
+
+output "username" {
+  description = "RDS 인스턴스 사용자 이름"
+  value       = aws_db_instance.this.username
+}
+
+output "password" {
+  description = "RDS 인스턴스 비밀번호"
+  value       = aws_db_instance.this.password
+}
+
+output "db_name" {
+  description = "RDS 인스턴스 데이터베이스 이름"
+  value       = aws_db_instance.this.db_name
+}

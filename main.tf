@@ -14,6 +14,9 @@ module "vpc" {
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
+
+  enable_dns_hostnames = true # 반드시 true
+  enable_dns_support   = true # 반드시 true
 }
 
 # private API 서버 라우트 테이블
@@ -155,11 +158,20 @@ module "recommendation_alb" {
   }
 }
 
+
+
 module "step_function" {
-  source            = "./modules/step-function"
-  public_subnet_ids = module.vpc.public_subnets
-  vpc_id            = module.vpc.vpc_id
-  openai_api_key    = var.openai_api_key
+  source                     = "./modules/step-function"
+  public_subnet_ids          = module.vpc.public_subnets
+  vpc_id                     = module.vpc.vpc_id
+  openai_api_key             = var.openai_api_key
+  restaurant_db_host         = module.rds.address
+  restaurant_db_user         = module.rds.username
+  restaurant_db_password     = module.rds.password
+  restaurant_db_name         = module.rds.db_name
+  private_subnets_for_lambda = [aws_subnet.private_subnet_for_api_server.id]
+  # security_groups_for_lambda = [aws_security_group.lambda_sg.id]
+  # access_rds_role_arn        = aws_iam_role.access_rds_role.arn
 }
 
 # wellmeet API 서버
@@ -177,22 +189,13 @@ resource "aws_security_group" "rds" {
   description = "Security group for RDS MySQL"
   vpc_id      = module.vpc.vpc_id
 
-  # API 서버들로부터의 MySQL 접근 허용
+  # API 서버, bastion host, lambda로부터의 MySQL 접근 허용
   ingress {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.api_server.id]
+    security_groups = [aws_security_group.api_server.id, module.step_function.save_restaurant_to_db_lambda_sg, module.ec2.security_group_id]
     description     = "Allow MySQL access from API servers"
-  }
-
-  # 필요시 Bastion Host에서도 접근 허용
-  ingress {
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [module.ec2.security_group_id]
-    description     = "Allow MySQL access from Bastion host"
   }
 
   egress {

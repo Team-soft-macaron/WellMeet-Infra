@@ -34,3 +34,23 @@ variable "embedding_vector_bucket_directory" {
 variable "openai_api_key" {
   type = string
 }
+
+variable "restaurant_db_host" {
+  type = string
+}
+
+variable "restaurant_db_user" {
+  type = string
+}
+
+variable "restaurant_db_password" {
+  type = string
+}
+
+variable "restaurant_db_name" {
+  type = string
+}
+
+variable "private_subnets_for_lambda" {
+  type = list(string)
+}
