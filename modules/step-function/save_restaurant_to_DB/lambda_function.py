@@ -2,65 +2,74 @@ import json
 import boto3
 import os
 import pymysql
+import pg8000
 from urllib.parse import unquote_plus
 import uuid
 
 s3_client = boto3.client("s3")
 
 
-def get_db_connection():
-    """데이터베이스 연결을 생성합니다."""
+def get_restaurant_db_connection():
+    """restaurant 데이터베이스 연결을 생성합니다. (MySQL)"""
     return pymysql.connect(
-        host=os.environ.get("DB_HOST"),
-        user=os.environ.get("DB_USER"),
-        password=os.environ.get("DB_PASSWORD"),
-        database=os.environ.get("DB_NAME"),
+        host=os.environ.get("RESTAURANT_DB_HOST"),
+        user=os.environ.get("RESTAURANT_DB_USER"),
+        password=os.environ.get("RESTAURANT_DB_PASSWORD"),
+        database=os.environ.get("RESTAURANT_DB_NAME"),
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
     )
 
 
+def get_recommend_db_connection():
+    """recommend 데이터베이스 연결을 생성합니다. (PostgreSQL with pg8000)"""
+    return pg8000.connect(
+        host=os.environ.get("RECOMMEND_DB_HOST"),
+        user=os.environ.get("RECOMMEND_DB_USER"),
+        password=os.environ.get("RECOMMEND_DB_PASSWORD"),
+        database=os.environ.get("RECOMMEND_DB_NAME"),
+        port=int(os.environ.get("RECOMMEND_DB_PORT")),
+    )
+
+
 def save_restaurants_to_db(restaurants_data):
-    """식당 데이터를 DB에 저장합니다."""
-    connection = None
-    cursor = None
+    """식당 데이터를 두 개의 DB에 저장합니다."""
+    restaurant_connection = None
+    recommend_connection = None
+    restaurant_cursor = None
+    recommend_cursor = None
     saved_count = 0
-    restaurant_id = uuid.uuid4()
 
     try:
-        connection = get_db_connection()
-        cursor = connection.cursor()
+        restaurant_connection = get_restaurant_db_connection()
+        recommend_connection = get_recommend_db_connection()
+        restaurant_cursor = restaurant_connection.cursor()
+        recommend_cursor = recommend_connection.cursor()
 
         # 각 식당 데이터를 DB에 저장
         for restaurant in restaurants_data:
-            id = restaurant_id
+            # 각 restaurant마다 새로운 UUID 생성
+            restaurant_id = str(uuid.uuid4())
+
             place_id = restaurant.get("placeId")
             name = restaurant.get("name")
             address = restaurant.get("address")
-            latitude = restaurant.get("latitude", 0.0)
-            longitude = restaurant.get("longitude", 0.0)
-            thumbnail = restaurant.get("thumbnail", "")
-
-            # placeId가 없거나 필수 필드가 없으면 건너뛰기
-            if not place_id or not name or not address:
-                print(
-                    f"Skipping restaurant due to missing required fields: {restaurant}"
-                )
-                continue
+            latitude = restaurant.get("latitude") or 0.0
+            longitude = restaurant.get("longitude") or 0.0
+            thumbnail = restaurant.get("thumbnail") or ""
 
             try:
-                # INSERT ... ON DUPLICATE KEY UPDATE 사용 (placeId가 unique key이므로)
-                insert_query = """
+                # Restaurant DB에 저장 (MySQL)
+                restaurant_insert_query = """
                     INSERT IGNORE INTO restaurant (
-                        id, place_id, name, address, latitude, longitude, thumbnail
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        id, name, address, latitude, longitude, thumbnail
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
                 """
 
-                cursor.execute(
-                    insert_query,
+                restaurant_cursor.execute(
+                    restaurant_insert_query,
                     (
-                        id,
-                        place_id,
+                        restaurant_id,
                         name,
                         address,
                         latitude,
@@ -68,6 +77,26 @@ def save_restaurants_to_db(restaurants_data):
                         thumbnail,
                     ),
                 )
+
+                # Recommend DB에 저장 (PostgreSQL with pg8000)
+                # pg8000은 %s 대신 숫자 플레이스홀더 사용
+                recommend_insert_query = """
+                    INSERT INTO restaurant_vector (
+                        restaurant_id, place_id, latitude, longitude
+                    ) VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (place_id) DO NOTHING
+                """
+
+                recommend_cursor.execute(
+                    recommend_insert_query,
+                    (
+                        restaurant_id,
+                        place_id,
+                        latitude,
+                        longitude,
+                    ),
+                )
+
                 saved_count += 1
 
             except Exception as e:
@@ -75,20 +104,27 @@ def save_restaurants_to_db(restaurants_data):
                 continue
 
         # 변경사항 커밋
-        connection.commit()
-        print(f"Successfully saved {saved_count} restaurants to database")
+        restaurant_connection.commit()
+        recommend_connection.commit()
+        print(f"Successfully saved {saved_count} restaurants to both databases")
 
     except Exception as e:
         print(f"Database error: {str(e)}")
-        if connection:
-            connection.rollback()
+        if restaurant_connection:
+            restaurant_connection.rollback()
+        if recommend_connection:
+            recommend_connection.rollback()
         raise e
 
     finally:
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
+        if restaurant_cursor:
+            restaurant_cursor.close()
+        if recommend_cursor:
+            recommend_cursor.close()
+        if restaurant_connection:
+            restaurant_connection.close()
+        if recommend_connection:
+            recommend_connection.close()
 
     return saved_count
 
@@ -146,10 +182,15 @@ if __name__ == "__main__":
         "S3_BUCKET_NAME": "my-restaurant-bucket",
     }
 
-    # 테스트를 위한 환경 변수 설정 (실제 Lambda에서는 환경 변수로 설정)
-    os.environ["DB_HOST"] = "localhost"
-    os.environ["DB_USER"] = "root"
-    os.environ["DB_PASSWORD"] = "password"
-    os.environ["DB_NAME"] = "wellmeet"
+    # 테스트를 위한 환경 변수 설정
+    os.environ["RESTAURANT_DB_HOST"] = "localhost"
+    os.environ["RESTAURANT_DB_USER"] = "root"
+    os.environ["RESTAURANT_DB_PASSWORD"] = "password"
+    os.environ["RESTAURANT_DB_NAME"] = "wellmeet"
+    os.environ["RECOMMEND_DB_HOST"] = "localhost"
+    os.environ["RECOMMEND_DB_USER"] = "postgres"
+    os.environ["RECOMMEND_DB_PASSWORD"] = "password"
+    os.environ["RECOMMEND_DB_NAME"] = "wellmeet_recommendation"
+    os.environ["RECOMMEND_DB_PORT"] = "5432"
 
     handler(test_event, None)

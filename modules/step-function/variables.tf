@@ -54,3 +54,23 @@ variable "restaurant_db_name" {
 variable "private_subnets_for_lambda" {
   type = list(string)
 }
+
+variable "recommend_db_host" {
+  type = string
+}
+
+variable "recommend_db_user" {
+  type = string
+}
+
+variable "recommend_db_password" {
+  type = string
+}
+
+variable "recommend_db_name" {
+  type = string
+}
+
+variable "recommend_db_port" {
+  type = string
+}

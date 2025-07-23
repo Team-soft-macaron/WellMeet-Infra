@@ -170,6 +170,11 @@ module "step_function" {
   restaurant_db_password     = module.rds.password
   restaurant_db_name         = module.rds.db_name
   private_subnets_for_lambda = [aws_subnet.private_subnet_for_api_server.id]
+  recommend_db_host          = module.rds_postgres.address
+  recommend_db_user          = module.rds_postgres.username
+  recommend_db_password      = module.rds_postgres.password
+  recommend_db_name          = module.rds_postgres.db_name
+  recommend_db_port          = module.rds_postgres.port
   # security_groups_for_lambda = [aws_security_group.lambda_sg.id]
   # access_rds_role_arn        = aws_iam_role.access_rds_role.arn
 }

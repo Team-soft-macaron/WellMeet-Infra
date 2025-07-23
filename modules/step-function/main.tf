@@ -179,7 +179,6 @@ resource "aws_lambda_function" "extract_place_ids" {
     }
   }
 }
-
 # DB 저장 Lambda
 resource "aws_lambda_function" "save_restaurant_to_db" {
   filename         = data.archive_file.save_restaurant_to_db_zip.output_path
@@ -192,18 +191,23 @@ resource "aws_lambda_function" "save_restaurant_to_db" {
 
   environment {
     variables = {
-      S3_BUCKET_NAME = module.s3_data_pipeline.bucket_name
-      DB_HOST        = var.restaurant_db_host
-      DB_USER        = var.restaurant_db_user
-      DB_PASSWORD    = var.restaurant_db_password
-      DB_NAME        = var.restaurant_db_name
+      S3_BUCKET_NAME         = module.s3_data_pipeline.bucket_name
+      RESTAURANT_DB_HOST     = var.restaurant_db_host
+      RESTAURANT_DB_USER     = var.restaurant_db_user
+      RESTAURANT_DB_PASSWORD = var.restaurant_db_password
+      RESTAURANT_DB_NAME     = var.restaurant_db_name
+      RECOMMEND_DB_HOST      = var.recommend_db_host
+      RECOMMEND_DB_USER      = var.recommend_db_user
+      RECOMMEND_DB_PASSWORD  = var.recommend_db_password
+      RECOMMEND_DB_NAME      = var.recommend_db_name
+      RECOMMEND_DB_PORT      = var.recommend_db_port
     }
   }
   vpc_config {
     subnet_ids         = var.private_subnets_for_lambda
     security_group_ids = [aws_security_group.save_restaurant_to_db_lambda_sg.id]
   }
-  layers = [aws_lambda_layer_version.pymysql_layer.arn]
+  layers = [aws_lambda_layer_version.db_layer.arn]
 }
 
 
@@ -286,7 +290,7 @@ resource "aws_batch_job_queue" "review_crawler" {
 }
 
 # 마지막 DB 저장을 위해 필요한 package lambda layer
-resource "terraform_data" "pymysql_layer_builder" {
+resource "terraform_data" "db_layer_builder" {
   triggers_replace = {
     requirements = filemd5("${path.module}/requirements.txt")
   }
@@ -304,19 +308,19 @@ resource "terraform_data" "pymysql_layer_builder" {
           pip install -r requirements.txt -t layer/python --no-cache-dir
           cd layer
           yum install -y zip
-          zip -r pymysql-layer.zip python/
+          zip -r db-layer.zip python/
         '
     EOT
   }
 }
 
 # Lambda Layer 생성
-resource "aws_lambda_layer_version" "pymysql_layer" {
-  filename            = "${path.module}/layer/pymysql-layer.zip"
-  layer_name          = "pymysql-layer"
+resource "aws_lambda_layer_version" "db_layer" {
+  filename            = "${path.module}/layer/db-layer.zip"
+  layer_name          = "db-layer"
   compatible_runtimes = ["python3.9"]
 
-  depends_on = [terraform_data.pymysql_layer_builder]
+  depends_on = [terraform_data.db_layer_builder]
 }
 
 resource "aws_iam_role" "access_rds_role" {
