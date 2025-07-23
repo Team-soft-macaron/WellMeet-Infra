@@ -3,6 +3,7 @@ import boto3
 import os
 import pymysql
 from urllib.parse import unquote_plus
+import uuid
 
 s3_client = boto3.client("s3")
 
@@ -24,6 +25,7 @@ def save_restaurants_to_db(restaurants_data):
     connection = None
     cursor = None
     saved_count = 0
+    restaurant_id = uuid.uuid4()
 
     try:
         connection = get_db_connection()
@@ -31,6 +33,7 @@ def save_restaurants_to_db(restaurants_data):
 
         # 각 식당 데이터를 DB에 저장
         for restaurant in restaurants_data:
+            id = restaurant_id
             place_id = restaurant.get("placeId")
             name = restaurant.get("name")
             address = restaurant.get("address")
@@ -49,13 +52,14 @@ def save_restaurants_to_db(restaurants_data):
                 # INSERT ... ON DUPLICATE KEY UPDATE 사용 (placeId가 unique key이므로)
                 insert_query = """
                     INSERT IGNORE INTO restaurant (
-                        place_id, name, address, latitude, longitude, thumbnail
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                        id, place_id, name, address, latitude, longitude, thumbnail
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """
 
                 cursor.execute(
                     insert_query,
                     (
+                        id,
                         place_id,
                         name,
                         address,

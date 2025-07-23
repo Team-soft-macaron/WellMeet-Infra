@@ -223,6 +223,18 @@ module "rds" {
   allocated_storage      = 20
 }
 
+module "rds_postgres" {
+  source                 = "./modules/rds-postgres"
+  identifier             = "recommendation-db"
+  subnet_ids             = module.vpc.private_subnets
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  db_name                = "recommendation"
+  username               = "wellmeet"
+  password               = var.wellmeet_db_password
+  instance_class         = "db.t3.micro"
+  allocated_storage      = 20
+}
+
 module "wellmeet_alb" {
   source          = "./modules/alb"
   name            = "wellmeet-alb"
