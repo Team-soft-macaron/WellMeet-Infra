@@ -1,19 +1,31 @@
 resource "aws_db_subnet_group" "this" {
   name       = "${var.identifier}-subnet-group"
   subnet_ids = var.subnet_ids
-
   tags = {
     Name = "${var.identifier}-subnet-group"
   }
 }
 
-# RDS 인스턴스 생성
+resource "aws_db_parameter_group" "postgres" {
+  name   = "${var.identifier}-params"
+  family = "postgres16"
+
+  parameter {
+    name  = "log_statement"
+    value = "all"
+  }
+
+  tags = {
+    Name = "${var.identifier}-params"
+  }
+}
+
 resource "aws_db_instance" "this" {
   identifier = var.identifier
 
-  # 엔진 설정
-  engine         = "mysql"
-  engine_version = "8.0.39"
+  # 엔진 설정 (PostgreSQL)
+  engine         = "postgres"
+  engine_version = "16"
 
   # 인스턴스 설정
   instance_class    = var.instance_class
@@ -26,6 +38,9 @@ resource "aws_db_instance" "this" {
   username = var.username
   password = var.password
   port     = 3306
+
+  # Parameter Group
+  parameter_group_name = aws_db_parameter_group.postgres.name
 
   # 네트워크 설정
   db_subnet_group_name   = aws_db_subnet_group.this.name
@@ -41,7 +56,9 @@ resource "aws_db_instance" "this" {
   multi_az = false
 
   # 모니터링 설정
-  enabled_cloudwatch_logs_exports = ["error", "slowquery"]
+  enabled_cloudwatch_logs_exports       = ["postgresql"]
+  performance_insights_enabled          = true
+  performance_insights_retention_period = 7
 
   # 기타 설정
   deletion_protection = false
@@ -50,5 +67,6 @@ resource "aws_db_instance" "this" {
 
   tags = {
     Name = var.identifier
+    Type = "PostgreSQL"
   }
 }

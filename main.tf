@@ -14,6 +14,9 @@ module "vpc" {
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
+
+  enable_dns_hostnames = true # 반드시 true
+  enable_dns_support   = true # 반드시 true
 }
 
 # private API 서버 라우트 테이블
@@ -155,19 +158,42 @@ module "recommendation_alb" {
   }
 }
 
+
+
 module "step_function" {
-  source            = "./modules/step-function"
-  public_subnet_ids = module.vpc.public_subnets
-  vpc_id            = module.vpc.vpc_id
-  openai_api_key    = var.openai_api_key
+  source                     = "./modules/step-function"
+  public_subnet_ids          = module.vpc.public_subnets
+  vpc_id                     = module.vpc.vpc_id
+  openai_api_key             = var.openai_api_key
+  restaurant_db_host         = module.rds.address
+  restaurant_db_user         = module.rds.username
+  restaurant_db_password     = module.rds.password
+  restaurant_db_name         = module.rds.db_name
+  private_subnets_for_lambda = [aws_subnet.private_subnet_for_api_server.id]
+  recommend_db_host          = module.rds_postgres.address
+  recommend_db_user          = module.rds_postgres.username
+  recommend_db_password      = module.rds_postgres.password
+  recommend_db_name          = module.rds_postgres.db_name
+  recommend_db_port          = module.rds_postgres.port
+  # security_groups_for_lambda = [aws_security_group.lambda_sg.id]
+  # access_rds_role_arn        = aws_iam_role.access_rds_role.arn
 }
 
 # wellmeet API 서버
-module "wellmeet_api_server" {
+module "wellmeet_api_server_user" {
   source             = "./modules/private_ec2"
   subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
-  instance_name      = "wellmeet-api-server"
+  instance_name      = "wellmeet-api-server-user"
+  security_group_ids = [aws_security_group.api_server.id]
+}
+
+# wellmeet API 서버
+module "wellmeet_api_server_owner" {
+  source             = "./modules/private_ec2"
+  subnet_id          = aws_subnet.private_subnet_for_api_server.id
+  vpc_id             = module.vpc.vpc_id
+  instance_name      = "wellmeet-api-server-owner"
   security_group_ids = [aws_security_group.api_server.id]
 }
 
@@ -177,22 +203,13 @@ resource "aws_security_group" "rds" {
   description = "Security group for RDS MySQL"
   vpc_id      = module.vpc.vpc_id
 
-  # API 서버들로부터의 MySQL 접근 허용
+  # API 서버, bastion host, lambda로부터의 MySQL 접근 허용
   ingress {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.api_server.id]
+    security_groups = [aws_security_group.api_server.id, module.step_function.save_restaurant_to_db_lambda_sg, module.ec2.security_group_id]
     description     = "Allow MySQL access from API servers"
-  }
-
-  # 필요시 Bastion Host에서도 접근 허용
-  ingress {
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [module.ec2.security_group_id]
-    description     = "Allow MySQL access from Bastion host"
   }
 
   egress {
@@ -220,24 +237,36 @@ module "rds" {
   allocated_storage      = 20
 }
 
-module "wellmeet_alb" {
+module "rds_postgres" {
+  source                 = "./modules/rds-postgres"
+  identifier             = "recommendation-db"
+  subnet_ids             = module.vpc.private_subnets
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  db_name                = "recommendation"
+  username               = "wellmeet"
+  password               = var.wellmeet_db_password
+  instance_class         = "db.t3.micro"
+  allocated_storage      = 20
+}
+
+module "wellmeet_user_alb" {
   source          = "./modules/alb"
-  name            = "wellmeet-alb"
+  name            = "wellmeet-user-alb"
   vpc_id          = module.vpc.vpc_id
   subnets         = module.vpc.public_subnets
   security_groups = [aws_security_group.application_load_balancer.id]
   target_groups = {
-    wellmeet_api_server = {
-      name              = "wellmeet-api-server"
+    wellmeet_api_server_user = {
+      name              = "wellmeet-api-server-user"
       port              = 8080
       protocol          = "HTTP"
       health_check_path = "/health"
     }
   }
   target_attachments = {
-    wellmeet_api_server = {
-      target_group_key = "wellmeet_api_server"
-      target_id        = module.wellmeet_api_server.instance_id
+    wellmeet_api_server_user = {
+      target_group_key = "wellmeet_api_server_user"
+      target_id        = module.wellmeet_api_server_user.instance_id
       port             = 8080
     }
   }
@@ -245,7 +274,37 @@ module "wellmeet_alb" {
     http = {
       port             = 80
       protocol         = "HTTP"
-      target_group_key = "wellmeet_api_server"
+      target_group_key = "wellmeet_api_server_user"
+    }
+  }
+}
+
+module "wellmeet_owner_alb" {
+  source          = "./modules/alb"
+  name            = "wellmeet-owner-alb"
+  vpc_id          = module.vpc.vpc_id
+  subnets         = module.vpc.public_subnets
+  security_groups = [aws_security_group.application_load_balancer.id]
+  target_groups = {
+    wellmeet_api_server_owner = {
+      name              = "wellmeet-api-server-owner"
+      port              = 8080
+      protocol          = "HTTP"
+      health_check_path = "/health"
+    }
+  }
+  target_attachments = {
+    wellmeet_api_server_owner = {
+      target_group_key = "wellmeet_api_server_owner"
+      target_id        = module.wellmeet_api_server_owner.instance_id
+      port             = 8080
+    }
+  }
+  listeners = {
+    http = {
+      port             = 80
+      protocol         = "HTTP"
+      target_group_key = "wellmeet_api_server_owner"
     }
   }
 }
