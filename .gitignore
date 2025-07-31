@@ -41,3 +41,4 @@ venv
 *.pem
 
 layer/
+.DS_Store
