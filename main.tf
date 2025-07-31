@@ -180,11 +180,20 @@ module "step_function" {
 }
 
 # wellmeet API 서버
-module "wellmeet_api_server" {
+module "wellmeet_api_server_user" {
   source             = "./modules/private_ec2"
   subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
-  instance_name      = "wellmeet-api-server"
+  instance_name      = "wellmeet-api-server-user"
+  security_group_ids = [aws_security_group.api_server.id]
+}
+
+# wellmeet API 서버
+module "wellmeet_api_server_owner" {
+  source             = "./modules/private_ec2"
+  subnet_id          = aws_subnet.private_subnet_for_api_server.id
+  vpc_id             = module.vpc.vpc_id
+  instance_name      = "wellmeet-api-server-owner"
   security_group_ids = [aws_security_group.api_server.id]
 }
 
@@ -240,24 +249,24 @@ module "rds_postgres" {
   allocated_storage      = 20
 }
 
-module "wellmeet_alb" {
+module "wellmeet_user_alb" {
   source          = "./modules/alb"
-  name            = "wellmeet-alb"
+  name            = "wellmeet-user-alb"
   vpc_id          = module.vpc.vpc_id
   subnets         = module.vpc.public_subnets
   security_groups = [aws_security_group.application_load_balancer.id]
   target_groups = {
-    wellmeet_api_server = {
-      name              = "wellmeet-api-server"
+    wellmeet_api_server_user = {
+      name              = "wellmeet-api-server-user"
       port              = 8080
       protocol          = "HTTP"
       health_check_path = "/health"
     }
   }
   target_attachments = {
-    wellmeet_api_server = {
-      target_group_key = "wellmeet_api_server"
-      target_id        = module.wellmeet_api_server.instance_id
+    wellmeet_api_server_user = {
+      target_group_key = "wellmeet_api_server_user"
+      target_id        = module.wellmeet_api_server_user.instance_id
       port             = 8080
     }
   }
@@ -265,7 +274,37 @@ module "wellmeet_alb" {
     http = {
       port             = 80
       protocol         = "HTTP"
-      target_group_key = "wellmeet_api_server"
+      target_group_key = "wellmeet_api_server_user"
+    }
+  }
+}
+
+module "wellmeet_owner_alb" {
+  source          = "./modules/alb"
+  name            = "wellmeet-owner-alb"
+  vpc_id          = module.vpc.vpc_id
+  subnets         = module.vpc.public_subnets
+  security_groups = [aws_security_group.application_load_balancer.id]
+  target_groups = {
+    wellmeet_api_server_owner = {
+      name              = "wellmeet-api-server-owner"
+      port              = 8080
+      protocol          = "HTTP"
+      health_check_path = "/health"
+    }
+  }
+  target_attachments = {
+    wellmeet_api_server_owner = {
+      target_group_key = "wellmeet_api_server_owner"
+      target_id        = module.wellmeet_api_server_owner.instance_id
+      port             = 8080
+    }
+  }
+  listeners = {
+    http = {
+      port             = 80
+      protocol         = "HTTP"
+      target_group_key = "wellmeet_api_server_owner"
     }
   }
 }

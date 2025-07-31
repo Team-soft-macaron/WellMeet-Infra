@@ -13,7 +13,7 @@ variable "restaurant_bucket_directory" {
 
 variable "S3_bucket_name" {
   type    = string
-  default = "wellmeet-data-pipeline"
+  default = "wellmeet-pipeline"
 }
 
 variable "review_bucket_directory" {

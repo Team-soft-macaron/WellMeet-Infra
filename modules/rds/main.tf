@@ -13,7 +13,7 @@ resource "aws_db_instance" "this" {
 
   # 엔진 설정
   engine         = "mysql"
-  engine_version = "8.0.35"
+  engine_version = "8.0.39"
 
   # 인스턴스 설정
   instance_class    = var.instance_class

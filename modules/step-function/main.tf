@@ -325,28 +325,19 @@ resource "aws_batch_job_queue" "review_crawler" {
 
 # 마지막 DB 저장을 위해 필요한 package lambda layer
 resource "terraform_data" "db_layer_builder" {
-  triggers_replace = {
-    requirements = filemd5("${path.module}/requirements.txt")
-  }
-
   provisioner "local-exec" {
-    command = <<-EOT
-      docker run --rm \
-        -v ${abspath(path.module)}:/work \
-        -w /work \
-        --entrypoint /bin/bash \
-        public.ecr.aws/lambda/python:3.9 \
-        -c '
-          rm -rf layer
-          mkdir -p layer/python
-          pip install -r requirements.txt -t layer/python --no-cache-dir
-          cd layer
-          yum install -y zip
-          zip -r db-layer.zip python/
-        '
+    command     = <<-EOT
+      docker run --rm -v "${abspath(path.module)}:/app" -w /app --entrypoint /bin/bash public.ecr.aws/lambda/python:3.9 -c "rm -rf layer && mkdir -p layer/python && pip install pymysql==1.1.0 pg8000 -t layer/python --no-cache-dir && cd layer && yum install -y zip && zip -r db-layer.zip python/"
     EOT
+    interpreter = ["powershell", "-Command"]
   }
 }
+#   provisioner "local-exec" {
+#     command = <<-EOT
+#       docker run --rm -v "$(pwd)":/app -w /app --entrypoint /bin/bash "public.ecr.aws/lambda/python:3.9" -c 'rm -rf layer && mkdir -p layer/python && pip install -r requirements.txt -t layer/python --no-cache-dir && cd layer && yum install -y zip && zip -r db-layer.zip python/'
+#     EOT
+#   }
+# }
 
 # Lambda Layer 생성
 resource "aws_lambda_layer_version" "db_layer" {
@@ -454,7 +445,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
 
 # # 최소한의 보안 그룹
 resource "aws_security_group" "save_restaurant_to_db_lambda_sg" {
-  name   = "lambda-sg"
+  name   = "lambda-sg2"
   vpc_id = var.vpc_id
 
   egress {
