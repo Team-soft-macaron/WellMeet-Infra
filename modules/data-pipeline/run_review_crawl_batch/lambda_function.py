@@ -18,7 +18,7 @@ batch_client = boto3.client("batch")
 JOB_QUEUE = os.environ.get("BATCH_JOB_QUEUE", "fargate-spot-review-crawler-job-queue")
 JOB_DEFINITION = os.environ.get("BATCH_JOB_DEFINITION", "batch-review-job-definition")
 RESTAURANT_BUCKET_DIRECTORY = os.environ.get("RESTAURANT_BUCKET_DIRECTORY", "restaurant")
-S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "wellmeet-data-pipeline")
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "wellmeet-pipeline")
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

@@ -22,3 +22,18 @@ output "review_ecr_repository_url" {
   description = "URL of the review crawler ECR repository"
   value       = module.ecr_review.repository_url
 }
+
+output "embedding_queue_url" {
+  description = "URL of the SQS queue for embedding processing"
+  value       = aws_sqs_queue.embedding_queue.url
+}
+
+output "embedding_queue_arn" {
+  description = "ARN of the SQS queue for embedding processing"
+  value       = aws_sqs_queue.embedding_queue.arn
+}
+
+output "create_embedding_lambda_arn" {
+  description = "ARN of the create-embedding Lambda function"
+  value       = aws_lambda_function.create_embedding.arn
+}

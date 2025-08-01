@@ -1,8 +1,16 @@
-const AWS = require('aws-sdk');
+/*
+    1. 리뷰 데이터를 읽어온다.
+    2. 리뷰 데이터를 20개씩 청크로 나눈다.
+    3. 각 청크별로 요약을 생성한다.
+    4. 최종 요약을 생성한다.
+    5. 키워드를 추출한다.
+    6. 임베딩을 생성한다.
+    7. 결과를 S3에 업로드한다.
+*/
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 // AWS SDK 초기화
-const s3 = new AWS.S3();
-const sqs = new AWS.SQS();
+const s3Client = new S3Client({ region: 'ap-northeast-2' }); // 원하는 리전으로 변경
 
 // 환경변수
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
@@ -20,18 +28,18 @@ const logger = {
 /**
  * 메인 핸들러 함수
  */
-exports.handler = async (event, context) => {
+export const handler = async (event, context) => {
     logger.info('Starting embedding processing...');
 
     // SQS 메시지 처리
     for (const record of event.Records) {
         const messageBody = JSON.parse(record.body);
-        const s3Key = messageBody.s3Key || messageBody;
+        const reviewS3Key = messageBody.reviewS3Key;
 
-        logger.info(`Processing S3 key: ${s3Key}`);
+        logger.info(`Processing S3 key: ${reviewS3Key}`);
 
         // S3에서 리뷰 데이터 읽기
-        const reviews = await readReviewsFromS3(s3Key);
+        const reviews = await readReviewsFromS3(reviewS3Key);
         logger.info(`Read ${reviews.length} reviews from S3`);
 
         // 리뷰를 20개씩 청크로 나누기
@@ -64,7 +72,7 @@ exports.handler = async (event, context) => {
             totalReviews: reviews.length
         };
 
-        await uploadResultToS3(result, s3Key);
+        await uploadResultToS3(result, reviewS3Key);
         logger.info('Uploaded results to S3');
     }
 
@@ -77,8 +85,8 @@ exports.handler = async (event, context) => {
 /**
  * S3에서 리뷰 데이터 읽기
  */
-async function readReviewsFromS3(s3Key) {
-    const fullKey = `${S3_REVIEW_BUCKET_DIRECTORY}/${s3Key}`;
+async function readReviewsFromS3(reviewS3Key) {
+    const fullKey = `${S3_REVIEW_BUCKET_DIRECTORY}/${reviewS3Key}`;
     logger.info(`Reading from S3: ${S3_BUCKET_NAME}/${fullKey}`);
 
     const params = {
@@ -86,10 +94,28 @@ async function readReviewsFromS3(s3Key) {
         Key: fullKey
     };
 
-    const response = await s3.getObject(params).promise();
-    const data = JSON.parse(response.Body.toString('utf-8'));
+    try {
+        const response = await s3Client.send(new GetObjectCommand(params));
+        // 응답 본문 처리를 위한 스트림에서 데이터 읽기
+        const bodyContents = await streamToString(response.Body);
+        const data = JSON.parse(bodyContents);
 
-    return Array.isArray(data) ? data : [data];
+        return Array.isArray(data) ? data : [data];
+    } catch (error) {
+        logger.error(`Error reading from S3: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * 스트림을 문자열로 변환
+ */
+async function streamToString(stream) {
+    const chunks = [];
+    for await (const chunk of stream) {
+        chunks.push(chunk);
+    }
+    return Buffer.concat(chunks).toString('utf-8');
 }
 
 /**
@@ -119,7 +145,7 @@ async function processChunks(chunks) {
             messages: [
                 {
                     role: 'system',
-                    content: '당신은 한국어 리뷰를 요약하는 전문가입니다. 주어진 리뷰들을 간결하고 명확하게 요약해주세요.'
+                    content: '당신은 한국어 리뷰를 요약하는 전문가입니다. 주어진 리뷰들을 간결하고 명확하게 요약해주세요. 단, 모임의 목적, 식당의 분위기 및 서비스, 동행한 사람, 식당의 음식 정보를 포함해야 합니다.'
                 },
                 {
                     role: 'user',
@@ -147,7 +173,7 @@ async function createFinalSummary(chunkSummaries) {
         messages: [
             {
                 role: 'system',
-                content: '당신은 여러 요약을 종합하여 하나의 완전한 요약을 만드는 전문가입니다.'
+                content: '당신은 여러 요약을 종합하여 하나의 완전한 요약을 만드는 전문가입니다. 단, 모임의 목적, 식당의 분위기 및 서비스, 동행한 사람, 식당의 음식 정보를 포함해야 합니다.'
             },
             {
                 role: 'user',
@@ -173,10 +199,10 @@ async function extractKeywords(summary) {
                 content: `당신은 한국어 리뷰를 분석하는 전문가입니다.
 사용자의 리뷰를 분석하여 정확히 4가지 정보만 추출해주세요.
 추출할 정보:
-1. purpose (목적): 모임의 목적 - 생일, 기념일, 회식, 데이트, 가족모임 등
-2. vibe (분위기): 원하는 분위기 - 조용한, 활기찬, 로맨틱한, 편안한, 고급스러운 등
-3. companion (동행자): 함께 가는 사람 - 가족, 친구, 연인, 동료, 부모님 등
-4. food (음식): 선호하는 음식 종류 - 한식, 일식, 양식, 중식, 이탈리안 등
+1. purpose (목적) : 모임의 목적
+2. vibe (분위기 및 서비스) : 식당의 분위기
+3. companion (동행자) : 함께 간 사람
+4. food (음식) : 식당의 음식
 응답 규칙:
 - 모든 값은 반드시 한글 String으로 작성
 - 여러 특성이 있으면 "~고"로 연결 (예: "조용하고 편안한")
@@ -273,8 +299,8 @@ async function callOpenAIEmbedding(text) {
 /**
  * 결과를 S3에 업로드
  */
-async function uploadResultToS3(result, originalS3Key) {
-    const fileName = originalS3Key.replace('.json', '_embedding.json');
+async function uploadResultToS3(result, reviewS3Key) {
+    const fileName = reviewS3Key.replace('.json', '_embedding.json');
     const key = `embedding/${fileName}`;
 
     logger.info(`Uploading result to S3: ${S3_BUCKET_NAME}/${key}`);
@@ -286,6 +312,40 @@ async function uploadResultToS3(result, originalS3Key) {
         ContentType: 'application/json'
     };
 
-    await s3.putObject(params).promise();
-    logger.info(`Successfully uploaded to S3: ${key}`);
-} 
+    try {
+        await s3Client.send(new PutObjectCommand(params));
+        logger.info(`Successfully uploaded to S3: ${key}`);
+    } catch (error) {
+        logger.error(`Error uploading to S3: ${error.message}`);
+        throw error;
+    }
+}
+
+// 환경변수 설정 (테스트용)
+if (!process.env.S3_BUCKET_NAME) {
+    process.env.S3_BUCKET_NAME = 'test-bucket';
+}
+if (!process.env.S3_REVIEW_BUCKET_DIRECTORY) {
+    process.env.S3_REVIEW_BUCKET_DIRECTORY = 'review';
+}
+if (!process.env.OPENAI_API_KEY) {
+    process.env.OPENAI_API_KEY = 'test-api-key';
+}
+
+// 테스트 이벤트 (Lambda 환경에서는 주석 처리 필요)
+if (process.env.NODE_ENV === 'development') {
+    const testEvent = {
+        Records: [
+            {
+                body: JSON.stringify({ reviewS3Key: '21053857.json' })
+            }
+        ]
+    };
+
+    // handler 실행
+    handler(testEvent, {}).then(result => {
+        console.log('Test result:', result);
+    }).catch(error => {
+        console.error('Test error:', error);
+    });
+}

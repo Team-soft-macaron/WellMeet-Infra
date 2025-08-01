@@ -20,3 +20,7 @@ variable "review_bucket_directory" {
   type    = string
   default = "review"
 }
+
+variable "openai_api_key" {
+  type = string
+}

@@ -1,5 +1,4 @@
-
-# IAM Role for Batch Service
+# AWS Batch 서비스용 IAM 역할
 resource "aws_iam_role" "batch_service_role" {
   name = "batch-service-role"
 
@@ -22,7 +21,7 @@ resource "aws_iam_role_policy_attachment" "batch_service_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole"
 }
 
-# IAM Role for ECS Task Execution
+# ECS 태스크 실행용 IAM 역할
 resource "aws_iam_role" "ecs_task_execution_role" {
   name = "batch-ecs-task-execution-role"
 
@@ -45,7 +44,7 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# IAM Role for Job (Task Role)
+# 배치 작업용 IAM 역할 
 resource "aws_iam_role" "batch_job_role" {
   name = "batch-job-role"
 
@@ -63,7 +62,7 @@ resource "aws_iam_role" "batch_job_role" {
   })
 }
 
-# Add necessary policies to job role (customize based on your needs)
+# 배치 작업 역할에 필요한 정책 추가
 resource "aws_iam_role_policy" "batch_job_policy" {
   name = "batch-job-policy"
   role = aws_iam_role.batch_job_role.id
@@ -88,12 +87,20 @@ resource "aws_iam_role_policy" "batch_job_policy" {
           "logs:PutLogEvents"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = var.embedding_queue_arn
       }
     ]
   })
 }
 
-# Compute Environment
+# 컴퓨트 환경
 resource "aws_batch_compute_environment" "fargate_spot" {
   name         = "fargate-spot-compute-env"
   type         = "MANAGED"
@@ -102,7 +109,7 @@ resource "aws_batch_compute_environment" "fargate_spot" {
 
   compute_resources {
     type      = "FARGATE_SPOT"
-    max_vcpus = 256 # Adjust based on your needs
+    max_vcpus = 256
 
     subnets            = var.subnet_ids
     security_group_ids = var.security_group_ids
@@ -112,7 +119,8 @@ resource "aws_batch_compute_environment" "fargate_spot" {
     aws_iam_role_policy_attachment.batch_service_role_policy
   ]
 }
-# Job Queue
+
+# 작업 큐
 resource "aws_batch_job_queue" "restaurant_crawler" {
   name     = "fargate-spot-restaurant-crawler-job-queue"
   state    = "ENABLED"
@@ -132,7 +140,7 @@ resource "aws_batch_job_queue" "review_crawler" {
   }
 }
 
-# Job Definition
+# 작업 정의
 resource "aws_batch_job_definition" "review_crawler" {
   name = "batch-review-job-definition"
   type = "container"
@@ -160,7 +168,7 @@ resource "aws_batch_job_definition" "review_crawler" {
     executionRoleArn = aws_iam_role.ecs_task_execution_role.arn
     jobRoleArn       = aws_iam_role.batch_job_role.arn
 
-    # 실행 제한 시간 30분 (1800초)
+    # 실행 제한 시간 30분
     timeout = {
       attemptDurationSeconds = 1800
     }
@@ -196,6 +204,10 @@ resource "aws_batch_job_definition" "review_crawler" {
       {
         name  = "REVIEW_BUCKET_DIRECTORY"
         value = var.review_bucket_directory
+      },
+      {
+        name  = "SQS_QUEUE_URL"
+        value = var.embedding_queue_url
       }
     ]
   })
@@ -228,7 +240,7 @@ resource "aws_batch_job_definition" "restaurant_crawler" {
     executionRoleArn = aws_iam_role.ecs_task_execution_role.arn
     jobRoleArn       = aws_iam_role.batch_job_role.arn
 
-    # 실행 제한 시간 30분 (1800초)
+    # 실행 제한 시간 30분
     timeout = {
       attemptDurationSeconds = 1800
     }

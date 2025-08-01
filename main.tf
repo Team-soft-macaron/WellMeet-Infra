@@ -177,7 +177,7 @@ module "data_pipeline" {
   S3_bucket_name              = "wellmeet-pipeline"
   restaurant_bucket_directory = "restaurant"
   review_bucket_directory     = "review"
-
+  openai_api_key              = var.openai_api_key
 }
 
 # wellmeet API 서버
