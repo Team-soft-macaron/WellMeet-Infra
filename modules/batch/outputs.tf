@@ -22,3 +22,15 @@ output "restaurant_job_definition_arn" {
   description = "ARN of the restaurant job definition"
   value       = aws_batch_job_definition.restaurant_crawler.arn
 }
+output "review_job_queue_name" {
+  description = "Name of the review job queue"
+  value       = aws_batch_job_queue.review_crawler.name
+}
+output "review_job_definition_name" {
+  description = "Name of the review job definition"
+  value       = aws_batch_job_definition.review_crawler.name
+}
+output "restaurant_job_queue_name" {
+  description = "Name of the restaurant job queue"
+  value       = aws_batch_job_queue.restaurant_crawler.name
+}

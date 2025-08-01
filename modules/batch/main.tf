@@ -192,6 +192,10 @@ resource "aws_batch_job_definition" "review_crawler" {
       {
         name  = "PYTHONUNBUFFERED"
         value = "1"
+      },
+      {
+        name  = "REVIEW_BUCKET_DIRECTORY"
+        value = var.review_bucket_directory
       }
     ]
   })
@@ -256,6 +260,10 @@ resource "aws_batch_job_definition" "restaurant_crawler" {
       {
         name  = "PYTHONUNBUFFERED"
         value = "1"
+      },
+      {
+        name  = "RESTAURANT_BUCKET_DIRECTORY"
+        value = var.restaurant_bucket_directory
       }
     ]
   })

@@ -112,20 +112,11 @@ module "ec2" {
 
 # 추천 API 서버
 module "recommendation_api_server" {
-  source             = "./modules/private_ec2"
+  source             = "./modules/private-ec2"
   subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
   instance_name      = "recommendation-api-server"
   security_group_ids = [aws_security_group.api_server.id]
-}
-
-module "postgres" {
-  source                     = "./modules/postgres"
-  subnet_id                  = module.vpc.private_subnets[0]
-  allowed_security_group_ids = [module.ec2.security_group_id, aws_security_group.api_server.id]
-  vpc_id                     = module.vpc.vpc_id
-  ami_id                     = "ami-0aa6e95177252a286"
-  instance_name              = "recommendation"
 }
 
 module "recommendation_alb" {
@@ -160,28 +151,38 @@ module "recommendation_alb" {
 
 
 
-module "step_function" {
-  source                     = "./modules/step-function"
-  public_subnet_ids          = module.vpc.public_subnets
-  vpc_id                     = module.vpc.vpc_id
-  openai_api_key             = var.openai_api_key
-  restaurant_db_host         = module.rds.address
-  restaurant_db_user         = module.rds.username
-  restaurant_db_password     = module.rds.password
-  restaurant_db_name         = module.rds.db_name
-  private_subnets_for_lambda = [aws_subnet.private_subnet_for_api_server.id]
-  recommend_db_host          = module.rds_postgres.address
-  recommend_db_user          = module.rds_postgres.username
-  recommend_db_password      = module.rds_postgres.password
-  recommend_db_name          = module.rds_postgres.db_name
-  recommend_db_port          = module.rds_postgres.port
-  # security_groups_for_lambda = [aws_security_group.lambda_sg.id]
-  # access_rds_role_arn        = aws_iam_role.access_rds_role.arn
+# module "step_function" {
+#   source                     = "./modules/step-function"
+#   public_subnet_ids          = module.vpc.public_subnets
+#   vpc_id                     = module.vpc.vpc_id
+#   openai_api_key             = var.openai_api_key
+#   restaurant_db_host         = module.rds.address
+#   restaurant_db_user         = module.rds.username
+#   restaurant_db_password     = module.rds.password
+#   restaurant_db_name         = module.rds.db_name
+#   private_subnets_for_lambda = [aws_subnet.private_subnet_for_api_server.id]
+#   recommend_db_host          = module.rds_postgres.address
+#   recommend_db_user          = module.rds_postgres.username
+#   recommend_db_password      = module.rds_postgres.password
+#   recommend_db_name          = module.rds_postgres.db_name
+#   recommend_db_port          = module.rds_postgres.port
+#   # security_groups_for_lambda = [aws_security_group.lambda_sg.id]
+#   # access_rds_role_arn        = aws_iam_role.access_rds_role.arn
+# }
+
+module "data_pipeline" {
+  source                      = "./modules/data-pipeline"
+  vpc_id                      = module.vpc.vpc_id
+  public_subnet_ids           = module.vpc.public_subnets
+  S3_bucket_name              = "wellmeet-pipeline"
+  restaurant_bucket_directory = "restaurant"
+  review_bucket_directory     = "review"
+
 }
 
 # wellmeet API 서버
 module "wellmeet_api_server_user" {
-  source             = "./modules/private_ec2"
+  source             = "./modules/private-ec2"
   subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
   instance_name      = "wellmeet-api-server-user"
@@ -190,7 +191,7 @@ module "wellmeet_api_server_user" {
 
 # wellmeet API 서버
 module "wellmeet_api_server_owner" {
-  source             = "./modules/private_ec2"
+  source             = "./modules/private-ec2"
   subnet_id          = aws_subnet.private_subnet_for_api_server.id
   vpc_id             = module.vpc.vpc_id
   instance_name      = "wellmeet-api-server-owner"
@@ -205,10 +206,11 @@ resource "aws_security_group" "rds" {
 
   # API 서버, bastion host, lambda로부터의 MySQL 접근 허용
   ingress {
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [aws_security_group.api_server.id, module.step_function.save_restaurant_to_db_lambda_sg, module.ec2.security_group_id]
+    from_port = 3306
+    to_port   = 3306
+    protocol  = "tcp"
+    # security_groups = [aws_security_group.api_server.id, module.step_function.save_restaurant_to_db_lambda_sg, module.ec2.security_group_id]
+    security_groups = [aws_security_group.api_server.id, module.ec2.security_group_id]
     description     = "Allow MySQL access from API servers"
   }
 
@@ -308,3 +310,5 @@ module "wellmeet_owner_alb" {
     }
   }
 }
+
+# SQS

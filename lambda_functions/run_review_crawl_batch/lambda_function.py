@@ -15,8 +15,10 @@ s3_client = boto3.client("s3")
 batch_client = boto3.client("batch")
 
 # 환경변수
-JOB_QUEUE = os.environ.get("BATCH_JOB_QUEUE", "default-queue")
-JOB_DEFINITION = os.environ.get("BATCH_JOB_DEFINITION", "default-job-def")
+JOB_QUEUE = os.environ.get("BATCH_JOB_QUEUE", "fargate-spot-review-crawler-job-queue")
+JOB_DEFINITION = os.environ.get("BATCH_JOB_DEFINITION", "batch-review-job-definition")
+RESTAURANT_BUCKET_DIRECTORY = os.environ.get("RESTAURANT_BUCKET_DIRECTORY", "restaurant")
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "wellmeet-data-pipeline")
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -57,7 +59,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
             # 각 place_id에 대해 작업 실행
             job_responses = []
-            for place_id in place_ids:
+            for place_id in place_ids[:3]:
                 job_response = submit_batch_job(
                     place_id=place_id, source_bucket=bucket_name, source_key=object_key
                 )
@@ -97,27 +99,11 @@ def extract_place_ids(data: Any) -> List[str]:
     # 데이터가 리스트인 경우
     if isinstance(data, list):
         for item in data:
-            if isinstance(item, dict) and "place_id" in item:
-                place_id = item.get("place_id")
+            if isinstance(item, dict) and "placeId" in item:
+                place_id = item.get("placeId")
                 if place_id:
                     place_ids.append(str(place_id))
 
-    # 데이터가 딕셔너리인 경우 (예: {"items": [...], "places": [...]})
-    elif isinstance(data, dict):
-        # 모든 값을 순회하며 place_id 찾기
-        for key, value in data.items():
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict) and "place_id" in item:
-                        place_id = item.get("place_id")
-                        if place_id:
-                            place_ids.append(str(place_id))
-            elif isinstance(value, dict) and "place_id" in value:
-                place_id = value.get("place_id")
-                if place_id:
-                    place_ids.append(str(place_id))
-
-    # 중복 제거
     return list(set(place_ids))
 
 
@@ -135,40 +121,25 @@ def submit_batch_job(
     Returns:
         Batch 작업 응답
     """
-    try:
-        job_name = f"process-place-{place_id}-{int(time.time())}"
+    job_name = f"process-place-{place_id}-{int(time.time())}"
 
-        response = batch_client.submit_job(
-            jobName=job_name,
-            jobQueue=JOB_QUEUE,
-            jobDefinition=JOB_DEFINITION,
-            parameters={},
-            containerOverrides={
-                "environment": [
-                    {"name": "PLACE_ID", "value": place_id},
-                    {"name": "SOURCE_BUCKET", "value": source_bucket},
-                    {"name": "SOURCE_KEY", "value": source_key},
-                ]
-            },
-        )
+    response = batch_client.submit_job(
+        jobName=job_name,
+        jobQueue=JOB_QUEUE,
+        jobDefinition=JOB_DEFINITION,
+        parameters={},
+        containerOverrides={
+            "environment": [
+                {"name": "PLACE_ID", "value": place_id},
+                {"name": "SOURCE_BUCKET", "value": source_bucket},
+                {"name": "SOURCE_KEY", "value": source_key},
+            ]
+        },
+    )
 
-        logger.info(f"Submitted batch job {job_name} for place_id: {place_id}")
-        return response
+    logger.info(f"Submitted batch job {job_name} for place_id: {place_id}")
+    return response
 
-    except Exception as e:
-        logger.error(f"Error submitting batch job for place_id {place_id}: {str(e)}")
-        return {}
-
-
-def validate_json_structure(data: Any) -> bool:
-    """
-    JSON 데이터 구조 검증
-    """
-    if isinstance(data, list):
-        return all(isinstance(item, dict) for item in data)
-    elif isinstance(data, dict):
-        return True
-    return False
 
 
 def process_large_file(
@@ -179,24 +150,38 @@ def process_large_file(
     """
     place_ids = []
 
-    try:
-        response = s3_client.get_object(Bucket=bucket, Key=key)
+    response = s3_client.get_object(Bucket=bucket, Key=key)
 
-        # 스트리밍 파싱 대신 일반 파싱 사용 (ijson 없이)
-        file_content = response["Body"].read().decode("utf-8")
-        data = json.loads(file_content)
+    # 스트리밍 파싱 대신 일반 파싱 사용 (ijson 없이)
+    file_content = response["Body"].read().decode("utf-8")
+    data = json.loads(file_content)
 
-        # 데이터가 리스트인 경우
-        if isinstance(data, list):
-            for obj in data:
-                if isinstance(obj, dict) and "place_id" in obj:
-                    place_ids.append(str(obj["place_id"]))
-        # 데이터가 딕셔너리인 경우
-        elif isinstance(data, dict):
-            # extract_place_ids 함수 재사용
-            place_ids = extract_place_ids(data)
-
-    except Exception as e:
-        logger.error(f"Error processing large file: {str(e)}")
+    # 데이터가 리스트인 경우
+    if isinstance(data, list):
+        for obj in data:
+            if isinstance(obj, dict) and "placeId" in obj:
+                place_ids.append(str(obj["placeId"]))
 
     return place_ids
+
+
+if __name__ == "__main__":
+    # S3 이벤트 형식으로 테스트 이벤트 생성
+    test_event = {
+        "Records": [
+            {
+                "s3": {
+                    "bucket": {
+                        "name": "wellmeet-data-pipeline"
+                    },
+                    "object": {
+                        "key": "restaurant/강남역 식당.json"
+                    }
+                }
+            }
+        ]
+    }
+    
+    # 핸들러 실행
+    result = handler(test_event, None)
+    print(f"Result: {result}")
