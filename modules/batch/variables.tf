@@ -40,3 +40,13 @@ variable "review_bucket_directory" {
   description = "S3 bucket name for review"
   type        = string
 }
+
+variable "embedding_queue_url" {
+  description = "SQS queue URL for embedding"
+  type        = string
+}
+
+variable "embedding_queue_arn" {
+  description = "SQS queue ARN for embedding"
+  type        = string
+}
