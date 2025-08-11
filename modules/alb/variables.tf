@@ -33,7 +33,13 @@ variable "listeners" {
   type = map(object({
     port             = number
     protocol         = string
-    target_group_key = string
+    target_group_key = optional(string) # 규칙이 없을 때 사용
+    rules = optional(map(object({
+      priority         = number
+      path_patterns    = optional(list(string))
+      target_group_key = string
+    })))
+    default_target_group_key = optional(string) # 규칙이 있을 때 기본 타겟 그룹
   }))
 }
 

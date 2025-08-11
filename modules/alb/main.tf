@@ -39,7 +39,6 @@ resource "aws_lb_target_group_attachment" "this" {
   port             = each.value.port
 }
 
-
 resource "aws_lb_listener" "this" {
   for_each = var.listeners
 
@@ -47,8 +46,55 @@ resource "aws_lb_listener" "this" {
   port              = each.value.port
   protocol          = each.value.protocol
 
-  default_action {
+  # 기본 액션 설정
+  dynamic "default_action" {
+    for_each = each.value.rules != null ? [] : [1]
+    content {
+      type             = "forward"
+      target_group_arn = aws_lb_target_group.this[each.value.target_group_key].arn
+    }
+  }
+
+  # 규칙이 있는 경우 기본 액션을 설정하지 않음
+  dynamic "default_action" {
+    for_each = each.value.rules != null ? [1] : []
+    content {
+      type             = "forward"
+      target_group_arn = aws_lb_target_group.this[each.value.default_target_group_key].arn
+    }
+  }
+}
+
+# 리스너 규칙들
+resource "aws_lb_listener_rule" "this" {
+  for_each = {
+    for rule_id, rule_config in flatten([
+      for listener_key, listener in var.listeners : [
+        for rule_key, rule in listener.rules : {
+          listener_key = listener_key
+          rule_key     = rule_key
+          rule         = rule
+          rule_id      = "${listener_key}_${rule_key}"
+        }
+      ]
+      if listener.rules != null
+    ]) : rule_config.rule_id => rule_config
+  }
+
+  listener_arn = aws_lb_listener.this[each.value.listener_key].arn
+  priority     = each.value.rule.priority
+
+  action {
     type             = "forward"
-    target_group_arn = element(values(aws_lb_target_group.this), 0).arn
+    target_group_arn = aws_lb_target_group.this[each.value.rule.target_group_key].arn
+  }
+
+  dynamic "condition" {
+    for_each = each.value.rule.path_patterns != null ? each.value.rule.path_patterns : []
+    content {
+      path_pattern {
+        values = [condition.value]
+      }
+    }
   }
 }
