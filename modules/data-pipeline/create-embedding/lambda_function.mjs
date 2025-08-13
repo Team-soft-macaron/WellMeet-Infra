@@ -6,16 +6,20 @@
     5. 키워드를 추출한다.
     6. 임베딩을 생성한다.
     7. 결과를 S3에 업로드한다.
+    8. SQS에 메시지를 전송하여 식당 메타데이터 저장을 트리거한다.
 */
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 
 // AWS SDK 초기화
 const s3Client = new S3Client({ region: 'ap-northeast-2' }); // 원하는 리전으로 변경
+const sqsClient = new SQSClient({ region: 'ap-northeast-2' });
 
 // 환경변수
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const S3_REVIEW_BUCKET_DIRECTORY = process.env.S3_REVIEW_BUCKET_DIRECTORY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SAVE_RESTAURANT_QUEUE_URL = process.env.SAVE_RESTAURANT_QUEUE_URL;
 const OPENAI_API_URL = 'https://api.openai.com/v1';
 
 // 로깅 설정
@@ -304,7 +308,7 @@ async function callOpenAIEmbedding(text) {
 }
 
 /**
- * 결과를 S3에 업로드
+ * 결과를 S3에 업로드하고 SQS에 메시지 전송
  */
 async function uploadResultToS3(result, reviewS3Key) {
     const fileName = reviewS3Key.replace('.json', '_embedding.json');
@@ -320,10 +324,42 @@ async function uploadResultToS3(result, reviewS3Key) {
     };
 
     try {
+        // S3에 업로드
         await s3Client.send(new PutObjectCommand(params));
         logger.info(`Successfully uploaded to S3: ${key}`);
+
+        // SQS에 메시지 전송
+        await sendMessageToSQS({
+            s3Key: key
+        });
+        logger.info(`Successfully sent message to SQS for key: ${key}`);
+
     } catch (error) {
-        logger.error(`Error uploading to S3: ${error.message}`);
+        logger.error(`Error in uploadResultToS3: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * SQS에 메시지 전송
+ */
+async function sendMessageToSQS(data) {
+    const params = {
+        QueueUrl: SAVE_RESTAURANT_QUEUE_URL,
+        MessageBody: JSON.stringify(data),
+        MessageAttributes: {
+            'MessageType': {
+                DataType: 'String',
+                StringValue: 'restaurant_save_request'
+            }
+        }
+    };
+
+    try {
+        await sqsClient.send(new SendMessageCommand(params));
+        logger.info('Message sent to SQS successfully');
+    } catch (error) {
+        logger.error(`Error sending message to SQS: ${error.message}`);
         throw error;
     }
 }
@@ -337,6 +373,9 @@ if (!process.env.S3_REVIEW_BUCKET_DIRECTORY) {
 }
 if (!process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = 'test-api-key';
+}
+if (!process.env.SAVE_RESTAURANT_QUEUE_URL) {
+    process.env.SAVE_RESTAURANT_QUEUE_URL = 'https://sqs.ap-northeast-2.amazonaws.com/123456789012/SaveRestaurantQueue'; // 실제 SQS URL로 변경
 }
 
 // 테스트 이벤트 (Lambda 환경에서는 주석 처리 필요)

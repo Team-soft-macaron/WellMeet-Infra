@@ -121,6 +121,12 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+# Lambda VPC 실행 권한을 위한 관리형 정책 연결
+resource "aws_iam_role_policy_attachment" "lambda_vpc_policy" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 # Lambda 함수용 IAM 정책
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "data-pipeline-lambda-policy"
@@ -133,6 +139,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
+          "s3:PutObject",
           "s3:ListBucket"
         ]
         Resource = [
@@ -151,9 +158,33 @@ resource "aws_iam_role_policy" "lambda_policy" {
       {
         Effect = "Allow"
         Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.embedding_queue.arn,
+          aws_sqs_queue.save_restaurant_metadata_queue.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:AssignPrivateIpAddresses",
+          "ec2:UnassignPrivateIpAddresses"
         ]
         Resource = "*"
       }
@@ -269,64 +300,6 @@ resource "aws_sqs_queue" "save_restaurant_vector_queue" {
   }
 }
 
-# 임베딩 생성 Lambda용 IAM 역할
-resource "aws_iam_role" "create_embedding_lambda_role" {
-  name = "data-pipeline-create-embedding-lambda-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-}
-
-# 임베딩 생성 Lambda용 IAM 정책
-resource "aws_iam_role_policy" "create_embedding_lambda_policy" {
-  name = "data-pipeline-create-embedding-lambda-policy"
-  role = aws_iam_role.create_embedding_lambda_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          module.s3_data_pipeline.bucket_arn,
-          "${module.s3_data_pipeline.bucket_arn}/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "sqs:ReceiveMessage",
-          "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
-        ]
-        Resource = aws_sqs_queue.embedding_queue.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 # 임베딩 생성 Lambda용 CloudWatch 로그 그룹
 resource "aws_cloudwatch_log_group" "create_embedding_lambda_logs" {
   name              = "/aws/lambda/data-pipeline-create-embedding"
@@ -344,7 +317,7 @@ data "archive_file" "create_embedding_zip" {
 resource "aws_lambda_function" "create_embedding" {
   filename         = data.archive_file.create_embedding_zip.output_path
   function_name    = "data-pipeline-create-embedding"
-  role             = aws_iam_role.create_embedding_lambda_role.arn
+  role             = aws_iam_role.lambda_role.arn
   handler          = "lambda_function.handler"
   runtime          = "nodejs18.x"
   timeout          = 900 # 15 minutes
@@ -356,12 +329,13 @@ resource "aws_lambda_function" "create_embedding" {
       S3_BUCKET_NAME             = var.S3_bucket_name
       S3_REVIEW_BUCKET_DIRECTORY = var.review_bucket_directory
       OPENAI_API_KEY             = var.openai_api_key
+      SAVE_RESTAURANT_QUEUE_URL  = aws_sqs_queue.save_restaurant_metadata_queue.url
     }
   }
 
   depends_on = [
     aws_cloudwatch_log_group.create_embedding_lambda_logs,
-    aws_iam_role_policy.create_embedding_lambda_policy
+    aws_iam_role_policy.lambda_policy
   ]
 }
 
@@ -371,4 +345,77 @@ resource "aws_lambda_event_source_mapping" "sqs_embedding_trigger" {
   function_name    = aws_lambda_function.create_embedding.arn
   batch_size       = 10 # Process 10 messages at a time
   enabled          = true
+}
+
+# 식당 메타데이터 저장 Lambda용 CloudWatch 로그 그룹
+resource "aws_cloudwatch_log_group" "save_restaurant_metadata_lambda_logs" {
+  name              = "/aws/lambda/data-pipeline-save-restaurant-metadata"
+  retention_in_days = 14
+}
+
+# 식당 메타데이터 저장 Lambda용 아카이브 파일
+data "archive_file" "save_restaurant_metadata_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/save-restaurant-metadata"
+  output_path = "${path.module}/save-restaurant-metadata.zip"
+}
+
+# 식당 메타데이터 저장 Lambda 함수
+resource "aws_lambda_function" "save_restaurant_metadata" {
+  filename         = data.archive_file.save_restaurant_metadata_zip.output_path
+  function_name    = "data-pipeline-save-restaurant-metadata"
+  role             = aws_iam_role.lambda_role.arn # 기존 역할 사용
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 900
+  memory_size      = 1024
+  source_code_hash = data.archive_file.save_restaurant_metadata_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.pymysql_layer.arn]
+
+  # VPC 설정 추가
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.api_server_security_group_id]
+  }
+
+  environment {
+    variables = {
+      S3_BUCKET_NAME             = var.S3_bucket_name
+      EMBEDDING_BUCKET_DIRECTORY = "embedding"
+      RESTAURANT_DB_HOST         = var.restaurant_db_host
+      RESTAURANT_DB_USER         = var.restaurant_db_user
+      RESTAURANT_DB_PASSWORD     = var.restaurant_db_password
+      RESTAURANT_DB_NAME         = var.restaurant_db_name
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.save_restaurant_metadata_lambda_logs,
+    aws_iam_role_policy.lambda_policy
+  ]
+}
+
+# Lambda용 SQS 이벤트 소스 매핑
+resource "aws_lambda_event_source_mapping" "sqs_save_restaurant_trigger" {
+  event_source_arn = aws_sqs_queue.save_restaurant_metadata_queue.arn
+  function_name    = aws_lambda_function.save_restaurant_metadata.arn
+  batch_size       = 1 # 한 번에 하나씩 처리
+  enabled          = true
+}
+
+# Lambda Layer용 python 디렉토리 압축
+data "archive_file" "lambda_layer_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda-layer" # 전체 lambda-layer 디렉토리 사용
+  output_path = "${path.module}/lambda-layer.zip"
+  excludes    = ["build.sh", "requirements.txt"] # 불필요한 파일 제외
+}
+
+# Lambda Layer 생성 (pymysql 포함)
+resource "aws_lambda_layer_version" "pymysql_layer" {
+  filename            = data.archive_file.lambda_layer_zip.output_path
+  layer_name          = "data-pipeline-pymysql-layer"
+  description         = "Lambda Layer for pymysql dependency"
+  compatible_runtimes = ["python3.9"]
+  source_code_hash    = data.archive_file.lambda_layer_zip.output_base64sha256
 }
