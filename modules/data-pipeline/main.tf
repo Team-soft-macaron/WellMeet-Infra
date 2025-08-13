@@ -175,13 +175,14 @@ data "archive_file" "review_crawler_trigger_zip" {
 
 # S3 트리거용 Lambda 함수
 resource "aws_lambda_function" "review_crawler_trigger" {
-  filename      = data.archive_file.review_crawler_trigger_zip.output_path
-  function_name = "data-pipeline-review-crawler-trigger"
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "lambda_function.handler"
-  runtime       = "python3.9"
-  timeout       = 300
-  memory_size   = 512
+  filename         = data.archive_file.review_crawler_trigger_zip.output_path
+  function_name    = "data-pipeline-review-crawler-trigger"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 300
+  memory_size      = 512
+  source_code_hash = data.archive_file.review_crawler_trigger_zip.output_base64sha256
 
   environment {
     variables = {
@@ -235,9 +236,37 @@ resource "aws_sqs_queue" "embedding_queue" {
   }
 }
 
-# SQS 큐 URL (출력용)
 data "aws_sqs_queue" "embedding_queue" {
-  name = aws_sqs_queue.embedding_queue.name
+  name = "data-pipeline-embedding-queue"
+}
+
+# 식당 메타데이터 저장 SQS 큐
+resource "aws_sqs_queue" "save_restaurant_metadata_queue" {
+  name                       = "data-pipeline-save-restaurant-metadata-queue"
+  delay_seconds              = 0
+  max_message_size           = 262144
+  message_retention_seconds  = 345600 # 4 days
+  receive_wait_time_seconds  = 20     # Long polling
+  visibility_timeout_seconds = 900    # 15 minutes for Lambda processing
+
+  tags = {
+    Name = "data-pipeline-save-restaurant-metadata-queue"
+  }
+}
+
+
+# 식당 벡터 저장 SQS 큐
+resource "aws_sqs_queue" "save_restaurant_vector_queue" {
+  name                       = "data-pipeline-save-restaurant-vector-queue"
+  delay_seconds              = 0
+  max_message_size           = 262144
+  message_retention_seconds  = 345600 # 4 days
+  receive_wait_time_seconds  = 20     # Long polling
+  visibility_timeout_seconds = 900    # 15 minutes for Lambda processing
+
+  tags = {
+    Name = "data-pipeline-save-restaurant-vector-queue"
+  }
 }
 
 # 임베딩 생성 Lambda용 IAM 역할

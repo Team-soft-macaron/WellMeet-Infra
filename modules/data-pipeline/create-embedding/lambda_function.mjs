@@ -39,7 +39,8 @@ export const handler = async (event, context) => {
         logger.info(`Processing S3 key: ${reviewS3Key}`);
 
         // S3에서 리뷰 데이터 읽기
-        const reviews = await readReviewsFromS3(reviewS3Key);
+        const data = await readDataFromS3(reviewS3Key);
+        const reviews = data.reviews;
         logger.info(`Read ${reviews.length} reviews from S3`);
 
         // 리뷰를 20개씩 청크로 나누기
@@ -48,7 +49,7 @@ export const handler = async (event, context) => {
 
         // 각 청크별로 요약 생성
         const chunkSummaries = await processChunks(chunks);
-        logger.info(`Generated ${chunkSummaries.length} chunk summaries`);
+        logger.info(`Generated ${chunks.length} chunk summaries`);
 
         // 최종 요약 생성
         const finalSummary = await createFinalSummary(chunkSummaries);
@@ -62,9 +63,9 @@ export const handler = async (event, context) => {
         const embeddings = await generateEmbeddings(keywords);
         logger.info('Generated embeddings');
 
-        // 결과를 S3에 업로드
+        // 결과를 S3에 업로드 (restaurant_info와 reviews 포함)
         const result = {
-            placeId: reviews[0]?.placeId,
+            ...data, // 식당 메타데이터 전체 포함
             summary: finalSummary,
             keywords: keywords,
             embeddings: embeddings,
@@ -85,7 +86,7 @@ export const handler = async (event, context) => {
 /**
  * S3에서 리뷰 데이터 읽기
  */
-async function readReviewsFromS3(reviewS3Key) {
+async function readDataFromS3(reviewS3Key) {
     const fullKey = `${S3_REVIEW_BUCKET_DIRECTORY}/${reviewS3Key}`;
     logger.info(`Reading from S3: ${S3_BUCKET_NAME}/${fullKey}`);
 
@@ -100,7 +101,13 @@ async function readReviewsFromS3(reviewS3Key) {
         const bodyContents = await streamToString(response.Body);
         const data = JSON.parse(bodyContents);
 
-        return Array.isArray(data) ? data : [data];
+        // reviews 키 안에 있는 객체를 반환
+        if (data) {
+            return data;
+        } else {
+            logger.warn('No reviews found in data, returning empty array');
+            return [];
+        }
     } catch (error) {
         logger.error(`Error reading from S3: ${error.message}`);
         throw error;

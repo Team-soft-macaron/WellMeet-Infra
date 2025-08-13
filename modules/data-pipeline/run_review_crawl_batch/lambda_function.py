@@ -23,7 +23,7 @@ S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "wellmeet-pipeline")
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    S3 이벤트를 처리하고 JSON 파일에서 place_id를 추출하여 Batch 작업을 실행
+    S3 이벤트를 처리하고 JSON 파일에서 식당 메타데이터를 추출하여 Batch 작업을 실행
 
     Args:
         event: S3 이벤트 정보
@@ -52,16 +52,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
             logger.info(f"Successfully loaded JSON from {object_key}")
 
-            # place_id 추출 및 처리
-            place_ids = extract_place_ids(data)
-            logger.info(f"Found {len(place_ids)} place_ids in {object_key}")
-            total_submitted_jobs += len(place_ids)
+            # 식당 메타데이터 추출 및 처리
+            restaurant_data_list = extract_restaurant_data(data)
+            logger.info(f"Found {len(restaurant_data_list)} restaurants in {object_key}")
+            total_submitted_jobs += len(restaurant_data_list)
 
-            # 각 place_id에 대해 작업 실행
+            # 각 식당에 대해 작업 실행
             job_responses = []
-            for place_id in place_ids[:3]:
+            for restaurant_info in restaurant_data_list[:3]:  # 테스트용으로 3개만
                 job_response = submit_batch_job(
-                    place_id=place_id, source_bucket=bucket_name, source_key=object_key
+                    restaurant_info=restaurant_info, 
+                    source_bucket=bucket_name, 
+                    source_key=object_key
                 )
                 if job_response:
                     job_responses.append(job_response)
@@ -84,44 +86,60 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
-def extract_place_ids(data: Any) -> List[str]:
+def extract_restaurant_data(data: Any) -> List[Dict[str, Any]]:
     """
-    JSON 데이터에서 place_id 값들을 추출
+    JSON 데이터에서 식당 메타데이터를 추출
 
     Args:
         data: JSON 데이터 (리스트 또는 딕셔너리)
 
     Returns:
-        place_id 리스트
+        식당 메타데이터 리스트
     """
-    place_ids = []
+    restaurant_data = []
 
     # 데이터가 리스트인 경우
     if isinstance(data, list):
         for item in data:
             if isinstance(item, dict) and "placeId" in item:
-                place_id = item.get("placeId")
-                if place_id:
-                    place_ids.append(str(place_id))
+                # S3에 저장된 모든 메타데이터 추출
+                restaurant_info = {
+                    "placeId": item.get("placeId"),
+                    "name": item.get("name", ""),
+                    "category": item.get("category", ""),
+                    "page": item.get("page", 1),
+                    "origin_address": item.get("origin_address", ""),
+                    "address": item.get("address", ""),
+                    "latitude": item.get("latitude", 0.0),
+                    "longitude": item.get("longitude", 0.0)
+                }
+                
+                # placeId가 있는 경우만 추가
+                if restaurant_info["placeId"]:
+                    restaurant_data.append(restaurant_info)
 
-    return list(set(place_ids))
+    return restaurant_data
 
 
 def submit_batch_job(
-    place_id: str, source_bucket: str, source_key: str
+    restaurant_info: Dict[str, Any], source_bucket: str, source_key: str
 ) -> Dict[str, Any]:
     """
-    AWS Batch 작업 제출
+    AWS Batch 작업 제출 (메타데이터 포함)
 
     Args:
-        place_id: 처리할 place_id
+        restaurant_info: 식당 메타데이터
         source_bucket: 소스 S3 버킷
         source_key: 소스 S3 키
 
     Returns:
         Batch 작업 응답
     """
+    place_id = restaurant_info["placeId"]
     job_name = f"process-place-{place_id}-{int(time.time())}"
+
+    # 메타데이터를 JSON 문자열로 변환하여 환경변수로 전달
+    metadata_json = json.dumps(restaurant_info, ensure_ascii=False)
 
     response = batch_client.submit_job(
         jobName=job_name,
@@ -131,24 +149,24 @@ def submit_batch_job(
         containerOverrides={
             "environment": [
                 {"name": "PLACE_ID", "value": place_id},
+                {"name": "RESTAURANT_METADATA", "value": metadata_json},
                 {"name": "SOURCE_BUCKET", "value": source_bucket},
                 {"name": "SOURCE_KEY", "value": source_key},
             ]
         },
     )
 
-    logger.info(f"Submitted batch job {job_name} for place_id: {place_id}")
+    logger.info(f"Submitted batch job {job_name} for place_id: {place_id} with metadata")
     return response
-
 
 
 def process_large_file(
     bucket: str, key: str, chunk_size: int = 1024 * 1024
-) -> List[str]:
+) -> List[Dict[str, Any]]:
     """
-    대용량 JSON 파일을 스트리밍으로 처리
+    대용량 JSON 파일을 스트리밍으로 처리 (메타데이터 포함)
     """
-    place_ids = []
+    restaurant_data = []
 
     response = s3_client.get_object(Bucket=bucket, Key=key)
 
@@ -160,9 +178,22 @@ def process_large_file(
     if isinstance(data, list):
         for obj in data:
             if isinstance(obj, dict) and "placeId" in obj:
-                place_ids.append(str(obj["placeId"]))
+                # S3에 저장된 모든 메타데이터 추출
+                restaurant_info = {
+                    "placeId": obj.get("placeId"),
+                    "name": obj.get("name", ""),
+                    "category": obj.get("category", ""),
+                    "page": obj.get("page", 1),
+                    "origin_address": obj.get("origin_address", ""),
+                    "address": obj.get("address", ""),
+                    "latitude": obj.get("latitude", 0.0),
+                    "longitude": obj.get("longitude", 0.0)
+                }
+                
+                if restaurant_info["placeId"]:
+                    restaurant_data.append(restaurant_info)
 
-    return place_ids
+    return restaurant_data
 
 
 if __name__ == "__main__":
