@@ -27,8 +27,8 @@ def get_restaurant_db_connection():
         cursorclass=pymysql.cursors.DictCursor,
     )
 
-def save_restaurant_to_db(restaurant_data):
-    """식당 데이터를 DB에 저장합니다."""
+def save_restaurant_to_db(restaurant_data, s3_key):
+    """식당 데이터를 DB에 저장하고 outbox 테이블에도 함께 저장합니다."""
     connection = None
     cursor = None
     saved_count = 0
@@ -67,8 +67,25 @@ def save_restaurant_to_db(restaurant_data):
             ),
         )
 
+        # Outbox 테이블에 S3 key 저장 (같은 트랜잭션)
+        outbox_payload = s3_key
+        
+        outbox_insert_query = """
+            INSERT INTO outbox (
+                payload, is_processed
+            ) VALUES (%s, %s)
+        """
+        
+        cursor.execute(
+            outbox_insert_query,
+            (
+                outbox_payload,
+                0  # is_processed = false
+            ),
+        )
+
         saved_count += 1
-        print(f"Successfully saved restaurant {place_id} to database")
+        print(f"Successfully saved restaurant {place_id} to database and outbox")
 
         # 변경사항 커밋
         connection.commit()
@@ -141,7 +158,7 @@ def handler(event, context):
             
             # placeId가 있는 경우만 DB에 저장
             if restaurant_metadata["placeId"]:
-                count = save_restaurant_to_db(restaurant_metadata)
+                count = save_restaurant_to_db(restaurant_metadata, s3_key)
                 saved_count += count
                 
                 print(f"Successfully processed placeId: {restaurant_metadata['placeId']}")
