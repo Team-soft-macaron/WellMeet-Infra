@@ -78,6 +78,11 @@ export const handler = async (event, context) => {
         };
 
         await uploadResultToS3(result, reviewS3Key);
+        // SQS에 메시지 전송
+        await sendMessageToSQS({
+            s3Key: reviewS3Key
+        });
+        logger.info(`Successfully sent message to SQS for key: ${reviewS3Key}`);
         logger.info('Uploaded results to S3');
     }
 
@@ -311,8 +316,7 @@ async function callOpenAIEmbedding(text) {
  * 결과를 S3에 업로드하고 SQS에 메시지 전송
  */
 async function uploadResultToS3(result, reviewS3Key) {
-    const fileName = reviewS3Key.replace('.json', '_embedding.json');
-    const key = `embedding/${fileName}`;
+    const key = `embedding/${reviewS3Key}`;
 
     logger.info(`Uploading result to S3: ${S3_BUCKET_NAME}/${key}`);
 
@@ -327,12 +331,6 @@ async function uploadResultToS3(result, reviewS3Key) {
         // S3에 업로드
         await s3Client.send(new PutObjectCommand(params));
         logger.info(`Successfully uploaded to S3: ${key}`);
-
-        // SQS에 메시지 전송
-        await sendMessageToSQS({
-            s3Key: key
-        });
-        logger.info(`Successfully sent message to SQS for key: ${key}`);
 
     } catch (error) {
         logger.error(`Error in uploadResultToS3: ${error.message}`);

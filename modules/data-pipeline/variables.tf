@@ -55,3 +55,29 @@ variable "api_server_security_group_id" {
   description = "Security group ID of the API server (RDS access)"
   type        = string
 }
+
+variable "recommend_db_host" {
+  description = "Recommend database host"
+  type        = string
+}
+
+variable "recommend_db_port" {
+  description = "Recommend database port"
+  type        = string
+}
+
+variable "recommend_db_name" {
+  description = "Recommend database name"
+  type        = string
+}
+
+variable "recommend_db_user" {
+  description = "Recommend database user"
+  type        = string
+}
+
+variable "recommend_db_password" {
+  description = "Recommend database password"
+  type        = string
+  sensitive   = true
+}

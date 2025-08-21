@@ -165,7 +165,8 @@ resource "aws_iam_role_policy" "lambda_policy" {
         ]
         Resource = [
           aws_sqs_queue.embedding_queue.arn,
-          aws_sqs_queue.save_restaurant_metadata_queue.arn
+          aws_sqs_queue.save_restaurant_metadata_queue.arn,
+          aws_sqs_queue.save_restaurant_vector_queue.arn
         ]
       },
       {
@@ -343,7 +344,7 @@ resource "aws_lambda_function" "create_embedding" {
 resource "aws_lambda_event_source_mapping" "sqs_embedding_trigger" {
   event_source_arn = aws_sqs_queue.embedding_queue.arn
   function_name    = aws_lambda_function.create_embedding.arn
-  batch_size       = 10 # Process 10 messages at a time
+  batch_size       = 10
   enabled          = true
 }
 
@@ -370,7 +371,7 @@ resource "aws_lambda_function" "save_restaurant_metadata" {
   timeout          = 900
   memory_size      = 1024
   source_code_hash = data.archive_file.save_restaurant_metadata_zip.output_base64sha256
-  layers           = [aws_lambda_layer_version.pymysql_layer.arn]
+  layers           = [aws_lambda_layer_version.db_layer.arn]
 
   # VPC 설정 추가
   vpc_config {
@@ -403,19 +404,138 @@ resource "aws_lambda_event_source_mapping" "sqs_save_restaurant_trigger" {
   enabled          = true
 }
 
-# Lambda Layer용 python 디렉토리 압축
-data "archive_file" "lambda_layer_zip" {
+# Outbox 폴링 Lambda용 CloudWatch 로그 그룹
+resource "aws_cloudwatch_log_group" "outbox_polling_lambda_logs" {
+  name              = "/aws/lambda/data-pipeline-outbox-polling"
+  retention_in_days = 14
+}
+
+# Outbox 폴링 Lambda용 아카이브 파일
+data "archive_file" "outbox_polling_zip" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda-layer" # 전체 lambda-layer 디렉토리 사용
-  output_path = "${path.module}/lambda-layer.zip"
-  excludes    = ["build.sh", "requirements.txt"] # 불필요한 파일 제외
+  source_dir  = "${path.module}/outbox-polling"
+  output_path = "${path.module}/outbox-polling.zip"
+}
+
+# Outbox 폴링 Lambda 함수
+resource "aws_lambda_function" "outbox_polling" {
+  filename         = data.archive_file.outbox_polling_zip.output_path
+  function_name    = "data-pipeline-outbox-polling"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 300
+  memory_size      = 512
+  source_code_hash = data.archive_file.outbox_polling_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.db_layer.arn]
+
+  # VPC 설정 추가
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.api_server_security_group_id]
+  }
+
+  environment {
+    variables = {
+      RESTAURANT_DB_HOST     = var.restaurant_db_host
+      RESTAURANT_DB_USER     = var.restaurant_db_user
+      RESTAURANT_DB_PASSWORD = var.restaurant_db_password
+      RESTAURANT_DB_NAME     = var.restaurant_db_name
+      OUTBOX_QUEUE_URL       = aws_sqs_queue.save_restaurant_vector_queue.url
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.outbox_polling_lambda_logs,
+    aws_iam_role_policy.lambda_policy
+  ]
+}
+
+# Vector 저장 Lambda용 CloudWatch 로그 그룹
+resource "aws_cloudwatch_log_group" "save_vector_lambda_logs" {
+  name              = "/aws/lambda/data-pipeline-save-vector"
+  retention_in_days = 14
+}
+
+# Vector 저장 Lambda용 아카이브 파일
+data "archive_file" "save_vector_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/save-vector"
+  output_path = "${path.module}/save-vector.zip"
+}
+
+# Vector 저장 Lambda 함수
+resource "aws_lambda_function" "save_vector" {
+  filename         = data.archive_file.save_vector_zip.output_path
+  function_name    = "data-pipeline-save-vector"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.handler"
+  runtime          = "python3.9"
+  timeout          = 900
+  memory_size      = 1024
+  source_code_hash = data.archive_file.save_vector_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.db_layer.arn]
+
+  # VPC 설정 추가
+  vpc_config {
+    subnet_ids         = var.private_subnet_ids
+    security_group_ids = [var.api_server_security_group_id]
+  }
+
+  environment {
+    variables = {
+      S3_BUCKET_NAME             = var.S3_bucket_name
+      EMBEDDING_BUCKET_DIRECTORY = "embedding"
+      RECOMMEND_DB_HOST          = var.recommend_db_host
+      RECOMMEND_DB_PORT          = var.recommend_db_port
+      RECOMMEND_DB_NAME          = var.recommend_db_name
+      RECOMMEND_DB_USER          = var.recommend_db_user
+      RECOMMEND_DB_PASSWORD      = var.recommend_db_password
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.save_vector_lambda_logs,
+    aws_iam_role_policy.lambda_policy
+  ]
+}
+
+# Vector 저장 Lambda용 SQS 이벤트 소스 매핑
+resource "aws_lambda_event_source_mapping" "sqs_save_vector_trigger" {
+  event_source_arn = aws_sqs_queue.save_restaurant_vector_queue.arn
+  function_name    = aws_lambda_function.save_vector.arn
+  batch_size       = 1 # 한 번에 하나씩 처리
+  enabled          = true
+}
+
+# EventBridge Rule - 1시간마다 outbox 폴링
+resource "aws_cloudwatch_event_rule" "outbox_polling_schedule" {
+  name                = "outbox-polling-schedule"
+  description         = "Trigger outbox polling Lambda every hour"
+  schedule_expression = "rate(1 hour)"
+}
+
+# EventBridge Target - outbox 폴링 Lambda
+resource "aws_cloudwatch_event_target" "outbox_polling_target" {
+  rule      = aws_cloudwatch_event_rule.outbox_polling_schedule.name
+  target_id = "OutboxPollingLambda"
+  arn       = aws_lambda_function.outbox_polling.arn
+}
+
+# EventBridge에서 Lambda 호출 권한
+resource "aws_lambda_permission" "eventbridge_outbox_polling" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.outbox_polling.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.outbox_polling_schedule.arn
 }
 
 # Lambda Layer 생성 (pymysql 포함)
-resource "aws_lambda_layer_version" "pymysql_layer" {
-  filename            = data.archive_file.lambda_layer_zip.output_path
-  layer_name          = "data-pipeline-pymysql-layer"
-  description         = "Lambda Layer for pymysql dependency"
+resource "aws_lambda_layer_version" "db_layer" {
+  filename            = "${path.module}/lambda-layer/lambda-layer.zip"
+  layer_name          = "data-pipeline-db-layer"
+  description         = "Lambda Layer for dependency"
   compatible_runtimes = ["python3.9"]
-  source_code_hash    = data.archive_file.lambda_layer_zip.output_base64sha256
+  source_code_hash    = filebase64sha256("${path.module}/lambda-layer/lambda-layer.zip")
 }

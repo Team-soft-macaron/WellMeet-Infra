@@ -72,13 +72,14 @@ def save_restaurant_to_db(restaurant_data, s3_key):
         
         outbox_insert_query = """
             INSERT INTO outbox (
-                payload, is_processed
-            ) VALUES (%s, %s)
+                restaurant_id, payload, is_processed
+            ) VALUES (%s, %s, %s)
         """
         
         cursor.execute(
             outbox_insert_query,
             (
+                restaurant_id,
                 outbox_payload,
                 0  # is_processed = false
             ),

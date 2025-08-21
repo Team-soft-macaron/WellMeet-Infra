@@ -219,6 +219,11 @@ module "data_pipeline" {
   restaurant_db_name           = var.restaurant_db_name
   private_subnet_ids           = [aws_subnet.private_subnet_for_api_server.id]
   api_server_security_group_id = aws_security_group.api_server.id
+  recommend_db_host            = module.rds_postgres.address
+  recommend_db_port            = module.rds_postgres.port
+  recommend_db_name            = module.rds_postgres.db_name
+  recommend_db_user            = module.rds_postgres.username
+  recommend_db_password        = module.rds_postgres.password
 }
 
 # wellmeet API user 서버
