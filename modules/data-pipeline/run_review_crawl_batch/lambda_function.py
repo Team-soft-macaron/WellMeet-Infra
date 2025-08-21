@@ -59,7 +59,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
             # 각 식당에 대해 작업 실행
             job_responses = []
-            for restaurant_info in restaurant_data_list[:3]:  # 테스트용으로 3개만
+            for restaurant_info in restaurant_data_list:
                 job_response = submit_batch_job(
                     restaurant_info=restaurant_info, 
                     source_bucket=bucket_name, 
