@@ -206,13 +206,24 @@ module "external_alb" {
 }
 
 module "data_pipeline" {
-  source                      = "./modules/data-pipeline"
-  vpc_id                      = module.vpc.vpc_id
-  public_subnet_ids           = module.vpc.public_subnets
-  S3_bucket_name              = "wellmeet-pipeline"
-  restaurant_bucket_directory = "restaurant"
-  review_bucket_directory     = "review"
-  openai_api_key              = var.openai_api_key
+  source                       = "./modules/data-pipeline"
+  vpc_id                       = module.vpc.vpc_id
+  public_subnet_ids            = module.vpc.public_subnets
+  S3_bucket_name               = "wellmeet-pipeline"
+  restaurant_bucket_directory  = "restaurant"
+  review_bucket_directory      = "review"
+  openai_api_key               = var.openai_api_key
+  restaurant_db_host           = var.restaurant_db_host
+  restaurant_db_user           = var.restaurant_db_user
+  restaurant_db_password       = var.restaurant_db_password
+  restaurant_db_name           = var.restaurant_db_name
+  private_subnet_ids           = [aws_subnet.private_subnet_for_api_server.id]
+  api_server_security_group_id = aws_security_group.api_server.id
+  recommend_db_host            = module.rds_postgres.address
+  recommend_db_port            = module.rds_postgres.port
+  recommend_db_name            = module.rds_postgres.db_name
+  recommend_db_user            = module.rds_postgres.username
+  recommend_db_password        = module.rds_postgres.password
 }
 
 # wellmeet API user 서버

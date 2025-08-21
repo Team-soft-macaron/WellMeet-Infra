@@ -27,6 +27,29 @@ variable "wellmeet_db_password" {
   sensitive   = true
 }
 
+variable "restaurant_db_host" {
+  description = "Restaurant database host"
+  type        = string
+}
+
+variable "restaurant_db_user" {
+  description = "Restaurant database user"
+  type        = string
+}
+
+
+variable "restaurant_db_password" {
+  description = "Restaurant database password"
+  type        = string
+  sensitive   = true
+}
+
+variable "restaurant_db_name" {
+  description = "Restaurant database name"
+  type        = string
+}
+
+
 # variable "api_url" {
 #   description = "API URL for Lambda environment variable"
 #   type        = string

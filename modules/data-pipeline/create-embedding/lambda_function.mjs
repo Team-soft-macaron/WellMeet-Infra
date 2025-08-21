@@ -6,16 +6,20 @@
     5. 키워드를 추출한다.
     6. 임베딩을 생성한다.
     7. 결과를 S3에 업로드한다.
+    8. SQS에 메시지를 전송하여 식당 메타데이터 저장을 트리거한다.
 */
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 
 // AWS SDK 초기화
 const s3Client = new S3Client({ region: 'ap-northeast-2' }); // 원하는 리전으로 변경
+const sqsClient = new SQSClient({ region: 'ap-northeast-2' });
 
 // 환경변수
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const S3_REVIEW_BUCKET_DIRECTORY = process.env.S3_REVIEW_BUCKET_DIRECTORY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SAVE_RESTAURANT_QUEUE_URL = process.env.SAVE_RESTAURANT_QUEUE_URL;
 const OPENAI_API_URL = 'https://api.openai.com/v1';
 
 // 로깅 설정
@@ -39,7 +43,8 @@ export const handler = async (event, context) => {
         logger.info(`Processing S3 key: ${reviewS3Key}`);
 
         // S3에서 리뷰 데이터 읽기
-        const reviews = await readReviewsFromS3(reviewS3Key);
+        const data = await readDataFromS3(reviewS3Key);
+        const reviews = data.reviews;
         logger.info(`Read ${reviews.length} reviews from S3`);
 
         // 리뷰를 20개씩 청크로 나누기
@@ -48,7 +53,7 @@ export const handler = async (event, context) => {
 
         // 각 청크별로 요약 생성
         const chunkSummaries = await processChunks(chunks);
-        logger.info(`Generated ${chunkSummaries.length} chunk summaries`);
+        logger.info(`Generated ${chunks.length} chunk summaries`);
 
         // 최종 요약 생성
         const finalSummary = await createFinalSummary(chunkSummaries);
@@ -62,9 +67,9 @@ export const handler = async (event, context) => {
         const embeddings = await generateEmbeddings(keywords);
         logger.info('Generated embeddings');
 
-        // 결과를 S3에 업로드
+        // 결과를 S3에 업로드 (restaurant_info와 reviews 포함)
         const result = {
-            placeId: reviews[0]?.placeId,
+            ...data, // 식당 메타데이터 전체 포함
             summary: finalSummary,
             keywords: keywords,
             embeddings: embeddings,
@@ -73,6 +78,11 @@ export const handler = async (event, context) => {
         };
 
         await uploadResultToS3(result, reviewS3Key);
+        // SQS에 메시지 전송
+        await sendMessageToSQS({
+            s3Key: reviewS3Key
+        });
+        logger.info(`Successfully sent message to SQS for key: ${reviewS3Key}`);
         logger.info('Uploaded results to S3');
     }
 
@@ -85,7 +95,7 @@ export const handler = async (event, context) => {
 /**
  * S3에서 리뷰 데이터 읽기
  */
-async function readReviewsFromS3(reviewS3Key) {
+async function readDataFromS3(reviewS3Key) {
     const fullKey = `${S3_REVIEW_BUCKET_DIRECTORY}/${reviewS3Key}`;
     logger.info(`Reading from S3: ${S3_BUCKET_NAME}/${fullKey}`);
 
@@ -100,7 +110,13 @@ async function readReviewsFromS3(reviewS3Key) {
         const bodyContents = await streamToString(response.Body);
         const data = JSON.parse(bodyContents);
 
-        return Array.isArray(data) ? data : [data];
+        // reviews 키 안에 있는 객체를 반환
+        if (data) {
+            return data;
+        } else {
+            logger.warn('No reviews found in data, returning empty array');
+            return [];
+        }
     } catch (error) {
         logger.error(`Error reading from S3: ${error.message}`);
         throw error;
@@ -297,11 +313,10 @@ async function callOpenAIEmbedding(text) {
 }
 
 /**
- * 결과를 S3에 업로드
+ * 결과를 S3에 업로드하고 SQS에 메시지 전송
  */
 async function uploadResultToS3(result, reviewS3Key) {
-    const fileName = reviewS3Key.replace('.json', '_embedding.json');
-    const key = `embedding/${fileName}`;
+    const key = `embedding/${reviewS3Key}`;
 
     logger.info(`Uploading result to S3: ${S3_BUCKET_NAME}/${key}`);
 
@@ -313,10 +328,36 @@ async function uploadResultToS3(result, reviewS3Key) {
     };
 
     try {
+        // S3에 업로드
         await s3Client.send(new PutObjectCommand(params));
         logger.info(`Successfully uploaded to S3: ${key}`);
+
     } catch (error) {
-        logger.error(`Error uploading to S3: ${error.message}`);
+        logger.error(`Error in uploadResultToS3: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * SQS에 메시지 전송
+ */
+async function sendMessageToSQS(data) {
+    const params = {
+        QueueUrl: SAVE_RESTAURANT_QUEUE_URL,
+        MessageBody: JSON.stringify(data),
+        MessageAttributes: {
+            'MessageType': {
+                DataType: 'String',
+                StringValue: 'restaurant_save_request'
+            }
+        }
+    };
+
+    try {
+        await sqsClient.send(new SendMessageCommand(params));
+        logger.info('Message sent to SQS successfully');
+    } catch (error) {
+        logger.error(`Error sending message to SQS: ${error.message}`);
         throw error;
     }
 }
@@ -330,6 +371,9 @@ if (!process.env.S3_REVIEW_BUCKET_DIRECTORY) {
 }
 if (!process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = 'test-api-key';
+}
+if (!process.env.SAVE_RESTAURANT_QUEUE_URL) {
+    process.env.SAVE_RESTAURANT_QUEUE_URL = 'https://sqs.ap-northeast-2.amazonaws.com/123456789012/SaveRestaurantQueue'; // 실제 SQS URL로 변경
 }
 
 // 테스트 이벤트 (Lambda 환경에서는 주석 처리 필요)
