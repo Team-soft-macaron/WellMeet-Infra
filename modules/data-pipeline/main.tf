@@ -286,6 +286,10 @@ resource "aws_sqs_queue" "save_restaurant_metadata_queue" {
   }
 }
 
+resource "aws_sqs_queue" "dlq" {
+  name                      = "data-pipeline-dlq"
+  message_retention_seconds = 1209600 # 14일
+}
 
 # 식당 벡터 저장 SQS 큐
 resource "aws_sqs_queue" "save_restaurant_vector_queue" {
@@ -295,7 +299,10 @@ resource "aws_sqs_queue" "save_restaurant_vector_queue" {
   message_retention_seconds  = 345600 # 4 days
   receive_wait_time_seconds  = 20     # Long polling
   visibility_timeout_seconds = 900    # 15 minutes for Lambda processing
-
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.dlq.arn
+    maxReceiveCount     = 3
+  })
   tags = {
     Name = "data-pipeline-save-restaurant-vector-queue"
   }
@@ -466,16 +473,16 @@ data "archive_file" "save_vector_zip" {
 
 # Vector 저장 Lambda 함수
 resource "aws_lambda_function" "save_vector" {
-  filename         = data.archive_file.save_vector_zip.output_path
-  function_name    = "data-pipeline-save-vector"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "lambda_function.handler"
-  runtime          = "python3.9"
-  timeout          = 900
-  memory_size      = 1024
-  source_code_hash = data.archive_file.save_vector_zip.output_base64sha256
-  layers           = [aws_lambda_layer_version.db_layer.arn]
-
+  filename                       = data.archive_file.save_vector_zip.output_path
+  function_name                  = "data-pipeline-save-vector"
+  role                           = aws_iam_role.lambda_role.arn
+  handler                        = "lambda_function.handler"
+  runtime                        = "python3.9"
+  timeout                        = 900
+  memory_size                    = 1024
+  source_code_hash               = data.archive_file.save_vector_zip.output_base64sha256
+  layers                         = [aws_lambda_layer_version.db_layer.arn]
+  reserved_concurrent_executions = 10
   # VPC 설정 추가
   vpc_config {
     subnet_ids         = var.private_subnet_ids
